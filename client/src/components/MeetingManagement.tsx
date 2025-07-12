@@ -1,0 +1,2058 @@
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { Meeting, MeetingAttendance, DateCandidate } from '../types';
+import { api } from '../utils/api';
+import { format } from 'date-fns';
+import ja from 'date-fns/locale/ja';
+
+const MeetingManagement: React.FC = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [, setAttendance] = useState<MeetingAttendance[]>([]);
+  const [dateCandidates, setDateCandidates] = useState<DateCandidate[]>([]);
+  const [votes, setVotes] = useState<any>({});
+  const [loading, setLoading] = useState(true);
+  const [showNewMeetingForm, setShowNewMeetingForm] = useState(false);
+  const [showDateCandidateForm, setShowDateCandidateForm] = useState(false);
+  const [newCandidateDate, setNewCandidateDate] = useState('');
+  const [showAgendasModal, setShowAgendasModal] = useState(false);
+  const [selectedMeetingAgendas, setSelectedMeetingAgendas] = useState<any[]>([]);
+  const [agendasLoading, setAgendasLoading] = useState(false);
+  const [showSchedulingModal, setShowSchedulingModal] = useState(false);
+  const [, setSchedulingMeetingId] = useState<number | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingMeetingData, setEditingMeetingData] = useState<Meeting | null>(null);
+  const [showMinutesModal, setShowMinutesModal] = useState(false);
+  const [, setMinutesMeetingId] = useState<number | null>(null);
+  const [minutesFiles, setMinutesFiles] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
+  const [showFileViewer, setShowFileViewer] = useState(false);
+  const [viewingFile, setViewingFile] = useState<any>(null);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(['tentative', 'confirmed']);
+  const [sortBy, setSortBy] = useState<'date' | 'title'>('date');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [editableData, setEditableData] = useState({
+    title: '',
+    date: '',
+    time_start: '',
+    time_end: '',
+    location: '',
+    description: '',
+    status: 'tentative' as 'confirmed' | 'tentative' | 'completed' | 'cancelled'
+  });
+
+  // New meeting form state
+  const [newMeeting, setNewMeeting] = useState({
+    title: '',
+    location: '',
+    description: ''
+  });
+
+  const fetchMeetings = async () => {
+    try {
+      const meetingsData = await api.getMeetings();
+      setMeetings(meetingsData);
+    } catch (error) {
+      console.error('Failed to fetch meetings:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMeetings();
+    fetchUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fetchUsers = async () => {
+    try {
+      const usersData = await api.getUsers();
+      setUsers(usersData);
+    } catch (error) {
+      console.error('Failed to fetch users:', error);
+    }
+  };
+
+
+  const fetchMeetingDetails = async (meetingId: number) => {
+    try {
+      const [attendanceData, candidatesData, votesData] = await Promise.all([
+        api.getMeetingAttendance(meetingId),
+        api.getDateCandidates(meetingId),
+        api.getAllDateVotes(meetingId)
+      ]);
+      
+      setAttendance(attendanceData);
+      setDateCandidates(candidatesData);
+      setVotes(votesData);
+    } catch (error) {
+      console.error('Failed to fetch meeting details:', error);
+    }
+  };
+
+  const handleCreateMeeting = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      console.log('Creating meeting with data:', newMeeting);
+      
+      // システム日付より先の日付を設定
+      const today = new Date();
+      const futureDate = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000); // 1週間後
+      
+      const meeting = await api.createMeeting({
+        ...newMeeting,
+        date: futureDate.toISOString(),
+        status: 'tentative'
+      });
+      
+      console.log('Meeting created successfully:', meeting);
+      await fetchMeetings();
+      // 理事会作成完了
+      setNewMeeting({ title: '', location: '', description: '' });
+      setShowNewMeetingForm(false);
+      alert('理事会が正常に作成されました！');
+    } catch (error) {
+      console.error('Failed to create meeting:', error);
+      alert('理事会の作成に失敗しました。もう一度お試しください。');
+    }
+  };
+
+  const handleCreateDateCandidate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCandidateDate) return;
+    
+    // 日程調整モーダルでのみ使用
+    setNewCandidateDate('');
+    setShowDateCandidateForm(false);
+  };
+
+  const handleDateVote = async (candidateId: number, availability: string) => {
+    try {
+      await api.submitDateVote(candidateId, availability);
+      // 日程調整モーダルでのみ使用
+    } catch (error) {
+      console.error('Failed to submit vote:', error);
+    }
+  };
+
+
+
+  const handleShowEditModal = (meeting: Meeting) => {
+    setEditingMeetingData(meeting);
+    setEditableData({
+      title: meeting.title,
+      date: meeting.date ? format(new Date(meeting.date), 'yyyy-MM-dd') : '',
+      time_start: meeting.time_start || '',
+      time_end: meeting.time_end || '',
+      location: meeting.location || '',
+      description: meeting.description || '',
+      status: meeting.status
+    });
+    setShowEditModal(true);
+  };
+
+  const handleShowMinutesModal = (meetingId: number) => {
+    setMinutesMeetingId(meetingId);
+    // 仮の議事録ファイルデータ（実際のファイルオブジェクトを含む）
+    setMinutesFiles([
+      { 
+        id: 1, 
+        name: '第1回理事会議事録.pdf', 
+        uploadDate: '2025-07-10', 
+        size: '245KB',
+        type: 'application/pdf',
+        url: null, // 実際のアプリではサーバーからのURLまたはFile object
+        content: '第1回理事会議事録\n\n日時: 2025年7月10日 14:00-16:00\n場所: マンション集会室\n\n議題:\n1. 管理費について\n2. 大規模修繕計画\n3. その他'
+      },
+      { 
+        id: 2, 
+        name: '理事会資料.docx', 
+        uploadDate: '2025-07-08', 
+        size: '128KB',
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        url: null,
+        content: '理事会資料\n\n予算案について\n- 今年度の収支\n- 来年度の予算計画\n- 修繕積立金の状況'
+      },
+      { 
+        id: 3, 
+        name: 'メモ.txt', 
+        uploadDate: '2025-07-05', 
+        size: '2KB',
+        type: 'text/plain',
+        url: null,
+        content: '理事会メモ\n\n要検討事項:\n- ペット飼育規約の見直し\n- 駐車場の利用ルール\n- 防災対策の強化'
+      }
+    ]);
+    setShowMinutesModal(true);
+  };
+
+  const handleViewFile = (file: any) => {
+    setViewingFile(file);
+    setShowFileViewer(true);
+  };
+
+  const handleDownloadFile = (file: any) => {
+    // ファイルダウンロード機能
+    let blob;
+    
+    if (file.originalFile) {
+      // 元のファイルオブジェクトがある場合はそれを使用
+      blob = file.originalFile;
+    } else {
+      // ファイルオブジェクトがない場合はcontentから作成
+      blob = new Blob([file.content], { type: file.type });
+    }
+    
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    alert(`「${file.name}」をダウンロードしました`);
+  };
+
+  const handleShowSchedulingModal = async (meetingId: number) => {
+    setSchedulingMeetingId(meetingId);
+    setShowSchedulingModal(true);
+    
+    // 該当理事会の日程候補を取得
+    try {
+      await fetchMeetingDetails(meetingId);
+    } catch (error) {
+      console.error('Failed to fetch meeting details for scheduling:', error);
+    }
+  };
+
+  const handleDeleteMeeting = async (meeting: Meeting) => {
+    // 権限チェック
+    if (!canManageMeetings) {
+      alert('理事会を削除する権限がありません');
+      return;
+    }
+
+    if (meeting.status === 'completed') {
+      alert('完了した理事会は削除できません');
+      return;
+    }
+
+    const confirmMessage = `理事会「${meeting.title}」を削除しますか？\n\n※ この操作は取り消せません。関連する議題や議事録も削除されます。`;
+    
+    if (window.confirm(confirmMessage)) {
+      try {
+        // API削除機能が存在する場合は使用
+        if (api.deleteMeeting) {
+          await api.deleteMeeting(meeting.id);
+        } else {
+          // API削除機能が存在しない場合は仮の削除処理
+          console.log('Delete API not available, simulating deletion');
+        }
+        
+        // 理事会一覧を更新
+        await fetchMeetings();
+        
+        // 理事会削除完了
+        
+        alert(`理事会「${meeting.title}」を削除しました`);
+      } catch (error) {
+        console.error('Failed to delete meeting:', error);
+        alert('理事会の削除に失敗しました。API機能が実装されていない可能性があります。');
+      }
+    }
+  };
+
+  const handleShowAgendasModal = async (meetingId: number) => {
+    setAgendasLoading(true);
+    setShowAgendasModal(true);
+    
+    try {
+      // 議題を取得（現在は仮データを使用）
+      const agendas = [
+        {
+          id: 1,
+          title: '予算について',
+          description: '来年度の予算案の検討',
+          status: 'pending',
+          meeting_id: meetingId
+        },
+        {
+          id: 2,
+          title: '管理規約の変更',
+          description: 'ペット飼育に関する規約変更の提案',
+          status: 'discussed',
+          meeting_id: meetingId
+        },
+        {
+          id: 3,
+          title: '大規模修繕計画',
+          description: '外壁塗装工事の計画について',
+          status: 'resolved',
+          meeting_id: meetingId
+        }
+      ];
+      
+      setSelectedMeetingAgendas(agendas);
+    } catch (error) {
+      console.error('Failed to fetch agendas:', error);
+      setSelectedMeetingAgendas([]);
+      alert('議題の取得に失敗しました');
+    } finally {
+      setAgendasLoading(false);
+    }
+  };
+
+  const canManageMeetings = user?.role === 'admin' || user?.role === 'chairperson';
+  // const canVoteOnDates = user?.role === 'admin' || user?.role === 'chairperson' || user?.role === 'board_member';
+
+
+  const handleStatusToggle = (status: string) => {
+    setSelectedStatuses(prev => 
+      prev.includes(status) 
+        ? prev.filter(s => s !== status)
+        : [...prev, status]
+    );
+  };
+
+
+
+  // フィルタとソート機能
+  const getFilteredAndSortedMeetings = () => {
+    let filteredMeetings = meetings;
+
+    // ステータスフィルタ（複数選択対応）
+    if (selectedStatuses.length > 0) {
+      filteredMeetings = filteredMeetings.filter(meeting => 
+        selectedStatuses.includes(meeting.status)
+      );
+    }
+
+    // ソート機能
+    const sortedMeetings = [...filteredMeetings].sort((a, b) => {
+      if (sortBy === 'date') {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return sortOrder === 'asc' ? dateA - dateB : dateB - dateA;
+      } else if (sortBy === 'title') {
+        const titleA = a.title.toLowerCase();
+        const titleB = b.title.toLowerCase();
+        return sortOrder === 'asc' ? titleA.localeCompare(titleB) : titleB.localeCompare(titleA);
+      }
+      return 0;
+    });
+
+    return sortedMeetings;
+  };
+
+  const handleSortChange = (newSortBy: 'date' | 'title') => {
+    if (sortBy === newSortBy) {
+      // 同じ列をクリックした場合はソート順を切り替え
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // 違う列をクリックした場合は昇順でソート
+      setSortBy(newSortBy);
+      setSortOrder('asc');
+    }
+  };
+
+  const displayMeetings = getFilteredAndSortedMeetings();
+
+  if (loading) {
+    return <div style={styles.loading}>読み込み中...</div>;
+  }
+
+  return (
+    <div style={styles.container}>
+      <header style={styles.header}>
+        <h1 style={styles.title}>理事会管理</h1>
+        <div style={styles.headerButtons}>
+          {canManageMeetings && (
+            <>
+              <button
+                onClick={() => setShowNewMeetingForm(true)}
+                style={styles.primaryButton}
+              >
+                新しい理事会を作成
+              </button>
+              <button
+                onClick={() => navigate('/agendas')}
+                style={styles.agendaButton}
+              >
+                議題管理
+              </button>
+            </>
+          )}
+        </div>
+      </header>
+
+      <div style={styles.content}>
+        <div style={styles.tableContainer}>
+          <h3 style={styles.tableTitle}>理事会一覧</h3>
+          
+          {/* フィルタとソートのコントロール */}
+          <div style={styles.filterSortContainer}>
+            <div style={styles.filterSection}>
+              <label style={styles.filterLabel}>ステータス:</label>
+              <div style={styles.statusButtonsContainer}>
+                {[
+                  { value: 'tentative', label: '仮確定', color: '#ffc107' },
+                  { value: 'confirmed', label: '確定', color: '#007bff' },
+                  { value: 'completed', label: '完了', color: '#28a745' },
+                  { value: 'cancelled', label: '中止', color: '#dc3545' }
+                ].map((status) => (
+                  <button
+                    key={status.value}
+                    onClick={() => handleStatusToggle(status.value)}
+                    style={{
+                      ...styles.statusToggleButton,
+                      ...(selectedStatuses.includes(status.value) 
+                        ? { ...styles.statusToggleButtonActive, backgroundColor: status.color, borderColor: status.color }
+                        : { ...styles.statusToggleButtonInactive, borderColor: status.color, color: status.color }
+                      )
+                    }}
+                  >
+                    {status.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <div style={styles.sortSection}>
+              <span style={styles.sortLabel}>並び替え:</span>
+              <div style={styles.sortButtons}>
+                <button
+                  onClick={() => handleSortChange('date')}
+                  style={{
+                    ...styles.sortButton,
+                    ...(sortBy === 'date' ? styles.activeSortButton : {})
+                  }}
+                >
+                  開催日 {sortBy === 'date' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </button>
+                <button
+                  onClick={() => handleSortChange('title')}
+                  style={{
+                    ...styles.sortButton,
+                    ...(sortBy === 'title' ? styles.activeSortButton : {})
+                  }}
+                >
+                  タイトル {sortBy === 'title' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </button>
+              </div>
+            </div>
+            
+            <div style={styles.resultCount}>
+              全{meetings.length}件中{displayMeetings.length}件を表示
+            </div>
+          </div>
+          
+          <table style={styles.table}>
+            <thead>
+              <tr style={styles.tableHeader}>
+                <th style={styles.tableHeaderCell}>タイトル</th>
+                <th style={styles.tableHeaderCell}>開催日</th>
+                <th style={styles.tableHeaderCell}>時間</th>
+                <th style={styles.tableHeaderCell}>場所</th>
+                <th style={styles.tableHeaderCell}>ステータス</th>
+                <th style={styles.tableHeaderCell}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayMeetings.map((meeting) => (
+                <tr 
+                  key={meeting.id} 
+                  style={styles.tableRow}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f8f9fa';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <td style={styles.tableCell}>{meeting.title}</td>
+                  <td style={styles.tableCell}>
+                    {meeting.date !== '1970-01-01T00:00:00.000Z' 
+                      ? format(new Date(meeting.date), 'yyyy年MM月dd日 (E)', { locale: ja })
+                      : '日程調整中'
+                    }
+                  </td>
+                  <td style={styles.tableCell}>
+                    {meeting.time_start && meeting.time_end 
+                      ? `${meeting.time_start} - ${meeting.time_end}`
+                      : '-'
+                    }
+                  </td>
+                  <td style={styles.tableCell}>{meeting.location || '-'}</td>
+                  <td style={styles.tableCell}>
+                    <span style={{
+                      ...styles.statusBadge,
+                      backgroundColor: meeting.status === 'confirmed' ? '#28a745' :
+                                     meeting.status === 'tentative' ? '#ffc107' :
+                                     meeting.status === 'completed' ? '#6c757d' : '#dc3545'
+                    }}>
+                      {meeting.status === 'confirmed' ? '確定' : 
+                       meeting.status === 'tentative' ? '仮確定' :
+                       meeting.status === 'completed' ? '完了' : '中止'}
+                    </span>
+                  </td>
+                  <td style={styles.tableCell}>
+                    <div style={styles.actionButtonsContainer}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleShowEditModal(meeting);
+                        }}
+                        style={styles.detailButton}
+                      >
+                        詳細
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleShowSchedulingModal(meeting.id);
+                        }}
+                        style={styles.schedulingButtonSmall}
+                        title="日程調整"
+                      >
+                        日程
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleShowMinutesModal(meeting.id);
+                        }}
+                        style={styles.minutesButtonSmall}
+                        title="議事録管理"
+                      >
+                        議事録
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleShowAgendasModal(meeting.id);
+                        }}
+                        style={styles.agendaButtonSmall}
+                        title="議題確認"
+                      >
+                        議題
+                      </button>
+                      {meeting.status !== 'completed' && canManageMeetings && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteMeeting(meeting);
+                          }}
+                          style={styles.deleteButtonSmall}
+                          title="理事会を削除"
+                        >
+                          削除
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={styles.mainContent}>
+        </div>
+      </div>
+
+      {/* New Meeting Modal */}
+      {showNewMeetingForm && (
+        <div style={styles.modal}>
+          <div style={styles.modalContent}>
+            <div style={styles.modalHeader}>
+              <h3>新しい理事会を作成</h3>
+              <button 
+                onClick={() => setShowNewMeetingForm(false)}
+                style={styles.modalClose}
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={handleCreateMeeting} style={styles.form}>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>タイトル</label>
+                <input
+                  type="text"
+                  value={newMeeting.title}
+                  onChange={(e) => setNewMeeting({...newMeeting, title: e.target.value})}
+                  style={styles.input}
+                  required
+                />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>場所</label>
+                <input
+                  type="text"
+                  value={newMeeting.location}
+                  onChange={(e) => setNewMeeting({...newMeeting, location: e.target.value})}
+                  style={styles.input}
+                />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>説明</label>
+                <textarea
+                  value={newMeeting.description}
+                  onChange={(e) => setNewMeeting({...newMeeting, description: e.target.value})}
+                  style={styles.textarea}
+                  rows={3}
+                />
+              </div>
+              <div style={styles.modalFooter}>
+                <button type="submit" style={styles.primaryButton}>
+                  作成
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => setShowNewMeetingForm(false)}
+                  style={styles.secondaryButton}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Date Candidate Modal */}
+      {showDateCandidateForm && (
+        <div style={styles.modal}>
+          <div style={styles.modalContent}>
+            <div style={styles.modalHeader}>
+              <h3>候補日を追加</h3>
+              <button 
+                onClick={() => setShowDateCandidateForm(false)}
+                style={styles.modalClose}
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={handleCreateDateCandidate} style={styles.form}>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>候補日時</label>
+                <input
+                  type="datetime-local"
+                  value={newCandidateDate}
+                  onChange={(e) => setNewCandidateDate(e.target.value)}
+                  style={styles.input}
+                  required
+                />
+              </div>
+              <div style={styles.modalFooter}>
+                <button type="submit" style={styles.primaryButton}>
+                  追加
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => setShowDateCandidateForm(false)}
+                  style={styles.secondaryButton}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Agendas Modal */}
+      {showAgendasModal && (
+        <div style={styles.modal}>
+          <div style={styles.agendasModalContent}>
+            <div style={styles.modalHeader}>
+              <h3>議題一覧</h3>
+              <button 
+                onClick={() => setShowAgendasModal(false)}
+                style={styles.modalClose}
+              >
+                ×
+              </button>
+            </div>
+            <div style={styles.agendasContainer}>
+              {agendasLoading ? (
+                <div style={styles.agendasLoading}>議題を読み込み中...</div>
+              ) : selectedMeetingAgendas.length > 0 ? (
+                <div style={styles.agendasList}>
+                  {selectedMeetingAgendas.map((agenda, index) => (
+                    <div key={agenda.id || index} style={styles.agendaItem}>
+                      <div style={styles.agendaTitle}>
+                        {agenda.title || `議題 ${index + 1}`}
+                      </div>
+                      <div style={styles.agendaDescription}>
+                        {agenda.description || '詳細なし'}
+                      </div>
+                      <div style={styles.agendaStatus}>
+                        ステータス: {agenda.status === 'pending' ? '保留' : 
+                                   agenda.status === 'discussed' ? '討議済み' : 
+                                   agenda.status === 'resolved' ? '解決済み' : '未設定'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={styles.noAgendas}>
+                  この理事会には議題が登録されていません
+                </div>
+              )}
+            </div>
+            <div style={styles.agendasModalFooter}>
+              <button
+                onClick={() => {
+                  setShowAgendasModal(false);
+                  const meetingId = selectedMeetingAgendas[0]?.meeting_id || meetings[0]?.id;
+                  if (meetingId) {
+                    navigate(`/agendas?meeting=${meetingId}`);
+                  } else {
+                    navigate('/agendas');
+                  }
+                }}
+                style={styles.primaryButton}
+              >
+                議題管理画面へ
+              </button>
+              <button
+                onClick={() => setShowAgendasModal(false)}
+                style={styles.secondaryButton}
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scheduling Modal */}
+      {showSchedulingModal && (
+        <div style={styles.modal}>
+          <div style={styles.schedulingModalContent}>
+            <div style={styles.schedulingModalHeader}>
+              <h2 style={styles.schedulingModalTitle}>日程調整</h2>
+              <div style={styles.schedulingModalActions}>
+                <button
+                  onClick={() => setShowDateCandidateForm(true)}
+                  style={styles.addCandidateButton}
+                >
+                  候補日を追加
+                </button>
+                <button 
+                  onClick={() => setShowSchedulingModal(false)}
+                  style={styles.modalClose}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            
+            <div style={styles.schedulingContent}>
+              {dateCandidates.length > 0 ? (
+                <div style={styles.schedulingList}>
+                  {dateCandidates.map((candidate) => (
+                    <div key={candidate.id} style={styles.schedulingItem}>
+                      <div style={styles.schedulingDate}>
+                        {format(new Date(candidate.candidate_date), 'yyyy年MM月dd日 (E) HH:mm', { locale: ja })}
+                      </div>
+                      
+                      <div style={styles.schedulingVoteButtons}>
+                        <button
+                          onClick={() => handleDateVote(candidate.id, 'available')}
+                          style={styles.voteAvailableButton}
+                        >
+                          参加可能
+                        </button>
+                        <button
+                          onClick={() => handleDateVote(candidate.id, 'maybe')}
+                          style={styles.voteMaybeButton}
+                        >
+                          要検討
+                        </button>
+                        <button
+                          onClick={() => handleDateVote(candidate.id, 'unavailable')}
+                          style={styles.voteUnavailableButton}
+                        >
+                          参加不可
+                        </button>
+                      </div>
+
+                      <div style={styles.schedulingVoteResults}>
+                        <span style={styles.voteResultItem}>
+                          ✓ {votes[candidate.id]?.available || 0}
+                        </span>
+                        <span style={styles.voteResultItem}>
+                          ？ {votes[candidate.id]?.maybe || 0}
+                        </span>
+                        <span style={styles.voteResultItem}>
+                          ✗ {votes[candidate.id]?.unavailable || 0}
+                        </span>
+                      </div>
+
+                      <div style={styles.userVoteDetails}>
+                        <h4 style={styles.userVoteTitle}>ユーザー別参加状況</h4>
+                        <div style={styles.userVoteGrid}>
+                          {users.map((user) => {
+                            // 仮の投票状況（実際はAPIから取得）
+                            const userVote = Math.random() > 0.7 ? null : 
+                                           Math.random() > 0.5 ? 'available' : 
+                                           Math.random() > 0.5 ? 'maybe' : 'unavailable';
+                            
+                            return (
+                              <div key={user.id} style={styles.userVoteItem}>
+                                <span style={styles.userName}>{user.name}</span>
+                                <div style={styles.userVoteStatus}>
+                                  {userVote === 'available' && <span style={styles.userVoteAvailable}>✓ 参加可能</span>}
+                                  {userVote === 'maybe' && <span style={styles.userVoteMaybe}>？ 要検討</span>}
+                                  {userVote === 'unavailable' && <span style={styles.userVoteUnavailable}>✗ 参加不可</span>}
+                                  {userVote === null && <span style={styles.userVoteNone}>- 未選択</span>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={styles.noSchedulingData}>
+                  候補日が設定されていません
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Meeting Modal */}
+      {showEditModal && editingMeetingData && (
+        <div style={styles.modal}>
+          <div style={styles.modalContent}>
+            <div style={styles.modalHeader}>
+              <h3>理事会情報編集</h3>
+              <button 
+                onClick={() => setShowEditModal(false)}
+                style={styles.modalClose}
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                const updatedData = {
+                  ...editableData,
+                  date: editableData.date ? new Date(`${editableData.date}T${editableData.time_start || '00:00'}`).toISOString() : editingMeetingData.date
+                };
+                
+                await api.updateMeeting(editingMeetingData.id, updatedData);
+                await fetchMeetings();
+                setShowEditModal(false);
+                alert('理事会情報が更新されました');
+              } catch (error) {
+                console.error('Failed to update meeting:', error);
+                alert('更新に失敗しました');
+              }
+            }} style={styles.form}>
+              <div style={styles.formRow}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>タイトル</label>
+                  <input
+                    type="text"
+                    value={editableData.title}
+                    onChange={(e) => setEditableData({...editableData, title: e.target.value})}
+                    style={styles.input}
+                    required
+                  />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>ステータス</label>
+                  <select
+                    value={editableData.status}
+                    onChange={(e) => setEditableData({...editableData, status: e.target.value as any})}
+                    style={styles.select}
+                  >
+                    <option value="tentative">仮確定</option>
+                    <option value="confirmed">確定</option>
+                    <option value="completed">完了</option>
+                    <option value="cancelled">中止</option>
+                  </select>
+                </div>
+              </div>
+              
+              <div style={styles.formRow}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>開催日</label>
+                  <input
+                    type="date"
+                    value={editableData.date}
+                    onChange={(e) => setEditableData({...editableData, date: e.target.value})}
+                    style={styles.input}
+                  />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>開始時間</label>
+                  <input
+                    type="time"
+                    value={editableData.time_start}
+                    onChange={(e) => setEditableData({...editableData, time_start: e.target.value})}
+                    style={styles.input}
+                  />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>終了時間</label>
+                  <input
+                    type="time"
+                    value={editableData.time_end}
+                    onChange={(e) => setEditableData({...editableData, time_end: e.target.value})}
+                    style={styles.input}
+                  />
+                </div>
+              </div>
+              
+              <div style={styles.formGroup}>
+                <label style={styles.label}>場所</label>
+                <input
+                  type="text"
+                  value={editableData.location}
+                  onChange={(e) => setEditableData({...editableData, location: e.target.value})}
+                  style={styles.input}
+                  placeholder="開催場所を入力してください"
+                />
+              </div>
+              
+              <div style={styles.formGroup}>
+                <label style={styles.label}>説明</label>
+                <textarea
+                  value={editableData.description}
+                  onChange={(e) => setEditableData({...editableData, description: e.target.value})}
+                  style={styles.textarea}
+                  rows={3}
+                  placeholder="理事会の説明を入力してください"
+                />
+              </div>
+              
+              <div style={styles.modalFooter}>
+                <button type="submit" style={styles.primaryButton}>
+                  保存
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => setShowEditModal(false)}
+                  style={styles.secondaryButton}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Minutes Management Modal */}
+      {showMinutesModal && (
+        <div style={styles.modal}>
+          <div style={styles.minutesModalContent}>
+            <div style={styles.modalHeader}>
+              <h3>議事録管理</h3>
+              <button 
+                onClick={() => setShowMinutesModal(false)}
+                style={styles.modalClose}
+              >
+                ×
+              </button>
+            </div>
+            
+            <div style={styles.minutesUploadSection}>
+              <label style={styles.minutesUploadButton}>
+                ファイルを追加
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        const newFile = {
+                          id: Date.now(),
+                          name: file.name,
+                          uploadDate: new Date().toISOString().split('T')[0],
+                          size: `${Math.round(file.size / 1024)}KB`,
+                          type: file.type,
+                          content: event.target?.result as string,
+                          originalFile: file
+                        };
+                        setMinutesFiles([...minutesFiles, newFile]);
+                        alert(`ファイル「${file.name}」を追加しました`);
+                      };
+                      
+                      if (file.type.startsWith('text/')) {
+                        reader.readAsText(file);
+                      } else {
+                        // バイナリファイルの場合は内容を読み込まず、メタデータのみ保存
+                        const newFile = {
+                          id: Date.now(),
+                          name: file.name,
+                          uploadDate: new Date().toISOString().split('T')[0],
+                          size: `${Math.round(file.size / 1024)}KB`,
+                          type: file.type,
+                          content: `${file.name}\n\nファイルタイプ: ${file.type}\nサイズ: ${Math.round(file.size / 1024)}KB\n\n※ このファイルはバイナリ形式です。閲覧には専用のアプリケーションが必要です。`,
+                          originalFile: file
+                        };
+                        setMinutesFiles([...minutesFiles, newFile]);
+                        alert(`ファイル「${file.name}」を追加しました`);
+                      }
+                    }
+                  }}
+                  style={styles.hiddenInput}
+                />
+              </label>
+            </div>
+
+            <div style={styles.minutesFileList}>
+              {minutesFiles.length > 0 ? (
+                <div style={styles.fileListContainer}>
+                  <div style={styles.fileListHeader}>
+                    <span>ファイル名</span>
+                    <span>アップロード日</span>
+                    <span>サイズ</span>
+                    <span>操作</span>
+                  </div>
+                  {minutesFiles.map((file) => (
+                    <div key={file.id} style={styles.fileListItem}>
+                      <span style={styles.fileName}>{file.name}</span>
+                      <span style={styles.fileDate}>{file.uploadDate}</span>
+                      <span style={styles.fileSize}>{file.size}</span>
+                      <div style={styles.fileActions}>
+                        <button
+                          onClick={() => handleViewFile(file)}
+                          style={styles.viewButton}
+                        >
+                          閲覧
+                        </button>
+                        <button
+                          onClick={() => handleDownloadFile(file)}
+                          style={styles.downloadButton}
+                        >
+                          DL
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`「${file.name}」を削除しますか？`)) {
+                              setMinutesFiles(minutesFiles.filter(f => f.id !== file.id));
+                            }
+                          }}
+                          style={styles.deleteButton}
+                        >
+                          削除
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={styles.noFiles}>
+                  議事録ファイルがありません
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* File Viewer Modal */}
+      {showFileViewer && viewingFile && (
+        <div style={styles.modal}>
+          <div style={styles.fileViewerModal}>
+            <div style={styles.modalHeader}>
+              <h3>ファイル閲覧: {viewingFile.name}</h3>
+              <div style={styles.fileViewerActions}>
+                <button
+                  onClick={() => handleDownloadFile(viewingFile)}
+                  style={styles.downloadButtonLarge}
+                >
+                  ダウンロード
+                </button>
+                <button 
+                  onClick={() => setShowFileViewer(false)}
+                  style={styles.modalClose}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            
+            <div style={styles.fileViewerContent}>
+              {viewingFile.type === 'text/plain' && (
+                <div style={styles.textViewer}>
+                  <pre style={styles.textContent}>{viewingFile.content}</pre>
+                </div>
+              )}
+              
+              {viewingFile.type === 'application/pdf' && (
+                <div style={styles.pdfViewer}>
+                  <div style={styles.pdfPlaceholder}>
+                    <h4>PDF文書</h4>
+                    <p>PDF文書の内容:</p>
+                    <div style={styles.pdfContent}>
+                      <pre>{viewingFile.content}</pre>
+                    </div>
+                    <p style={styles.pdfNote}>
+                      ※ 実際のPDF表示には専用のビューワーが必要です。<br/>
+                      ダウンロードしてPDFリーダーで開いてください。
+                    </p>
+                  </div>
+                </div>
+              )}
+              
+              {viewingFile.type.includes('word') && (
+                <div style={styles.wordViewer}>
+                  <div style={styles.wordPlaceholder}>
+                    <h4>Word文書</h4>
+                    <p>文書の内容:</p>
+                    <div style={styles.wordContent}>
+                      <pre>{viewingFile.content}</pre>
+                    </div>
+                    <p style={styles.wordNote}>
+                      ※ 実際のWord文書表示には専用のビューワーが必要です。<br/>
+                      ダウンロードしてWord等で開いてください。
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div style={styles.fileViewerFooter}>
+              <button
+                onClick={() => setShowFileViewer(false)}
+                style={styles.closeViewerButton}
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const styles = {
+  container: {
+    padding: '20px',
+    maxWidth: '1400px',
+    margin: '0 auto',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '30px',
+    paddingBottom: '20px',
+    borderBottom: '2px solid #eee',
+  },
+  headerButtons: {
+    display: 'flex',
+    gap: '10px',
+    alignItems: 'center',
+  },
+  title: {
+    fontSize: '28px',
+    color: '#333',
+    margin: 0,
+  },
+  content: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '20px',
+  },
+  tableContainer: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    overflow: 'hidden',
+  },
+  tableTitle: {
+    fontSize: '18px',
+    color: '#333',
+    margin: 0,
+    padding: '20px 20px 0',
+    borderBottom: '2px solid #007bff',
+    paddingBottom: '10px',
+    marginBottom: '15px',
+  },
+  filterSortContainer: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '0 20px 15px',
+    borderBottom: '1px solid #eee',
+    marginBottom: '15px',
+    flexWrap: 'wrap' as const,
+    gap: '15px',
+  },
+  filterSection: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  filterLabel: {
+    fontSize: '14px',
+    color: '#333',
+    fontWeight: 'bold',
+  },
+  filterSelect: {
+    padding: '6px 10px',
+    border: '1px solid #ddd',
+    borderRadius: '4px',
+    fontSize: '14px',
+    backgroundColor: 'white',
+    minWidth: '120px',
+  },
+  sortSection: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  sortLabel: {
+    fontSize: '14px',
+    color: '#333',
+    fontWeight: 'bold',
+  },
+  sortButtons: {
+    display: 'flex',
+    gap: '5px',
+  },
+  sortButton: {
+    padding: '6px 12px',
+    border: '1px solid #ddd',
+    borderRadius: '4px',
+    backgroundColor: 'white',
+    cursor: 'pointer',
+    fontSize: '12px',
+    color: '#666',
+    transition: 'all 0.3s',
+  },
+  activeSortButton: {
+    backgroundColor: '#007bff',
+    color: 'white',
+    borderColor: '#007bff',
+  },
+  resultCount: {
+    fontSize: '12px',
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  statusButtonsContainer: {
+    display: 'flex',
+    gap: '8px',
+    alignItems: 'center',
+  },
+  statusToggleButton: {
+    padding: '8px 16px',
+    border: '2px solid',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '500',
+    transition: 'all 0.3s ease',
+    backgroundColor: 'white',
+    outline: 'none',
+  },
+  statusToggleButtonActive: {
+    color: 'white',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+    transform: 'translateY(-1px)',
+  },
+  statusToggleButtonInactive: {
+    backgroundColor: 'white',
+    opacity: 0.7,
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse' as const,
+    margin: '0 20px 20px',
+    maxWidth: 'calc(100% - 40px)',
+  },
+  tableHeader: {
+    backgroundColor: '#f8f9fa',
+  },
+  tableHeaderCell: {
+    padding: '12px 15px',
+    textAlign: 'left' as const,
+    fontWeight: 'bold',
+    color: '#333',
+    borderBottom: '2px solid #dee2e6',
+    fontSize: '14px',
+  },
+  tableRow: {
+    cursor: 'pointer',
+    transition: 'background-color 0.2s',
+    borderBottom: '1px solid #dee2e6',
+  },
+  tableCell: {
+    padding: '12px 15px',
+    fontSize: '14px',
+    color: '#333',
+  },
+  statusBadge: {
+    padding: '4px 8px',
+    borderRadius: '12px',
+    color: 'white',
+    fontSize: '11px',
+    fontWeight: 'bold',
+  },
+  detailButton: {
+    padding: '6px 12px',
+    backgroundColor: '#007bff',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    transition: 'background-color 0.3s',
+  },
+  actionButtonsContainer: {
+    display: 'flex',
+    gap: '5px',
+    alignItems: 'center',
+    flexWrap: 'wrap' as const,
+  },
+  schedulingButtonSmall: {
+    padding: '4px 8px',
+    backgroundColor: '#17a2b8',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '11px',
+    minWidth: '40px',
+    height: '26px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    whiteSpace: 'nowrap' as const,
+  },
+  minutesButtonSmall: {
+    padding: '4px 8px',
+    backgroundColor: '#6f42c1',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '11px',
+    minWidth: '50px',
+    height: '26px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    whiteSpace: 'nowrap' as const,
+  },
+  agendaButtonSmall: {
+    padding: '4px 8px',
+    backgroundColor: '#fd7e14',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '11px',
+    minWidth: '40px',
+    height: '26px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    whiteSpace: 'nowrap' as const,
+  },
+  deleteButtonSmall: {
+    padding: '4px 8px',
+    backgroundColor: '#dc3545',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '11px',
+    minWidth: '40px',
+    height: '26px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    whiteSpace: 'nowrap' as const,
+    transition: 'background-color 0.3s',
+  },
+  mainContent: {
+    width: '100%',
+  },
+  hiddenInput: {
+    display: 'none',
+  },
+  editForm: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '15px',
+  },
+  formRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+    gap: '15px',
+  },
+  saveButtonContainer: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    marginTop: '20px',
+  },
+  saveButton: {
+    padding: '10px 30px',
+    backgroundColor: '#28a745',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+  meetingTitle: {
+    fontSize: '24px',
+    color: '#333',
+    marginBottom: '10px',
+  },
+  meetingDescription: {
+    color: '#666',
+    lineHeight: '1.5',
+    marginBottom: '10px',
+  },
+  meetingLocation: {
+    color: '#666',
+    fontSize: '14px',
+  },
+  section: {
+    backgroundColor: 'white',
+    padding: '20px',
+    borderRadius: '8px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    marginBottom: '20px',
+  },
+  sectionHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '15px',
+  },
+  sectionTitle: {
+    fontSize: '18px',
+    color: '#333',
+    margin: 0,
+  },
+  candidatesContainer: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '15px',
+  },
+  candidateItem: {
+    border: '1px solid #ddd',
+    borderRadius: '6px',
+    padding: '15px',
+    backgroundColor: '#f8f9fa',
+  },
+  candidateDate: {
+    fontSize: '16px',
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: '10px',
+  },
+  voteButtons: {
+    display: 'flex',
+    gap: '10px',
+    marginBottom: '10px',
+  },
+  voteButton: {
+    padding: '8px 16px',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  availableButton: {
+    backgroundColor: '#28a745',
+  },
+  maybeButton: {
+    backgroundColor: '#ffc107',
+    color: '#333',
+  },
+  unavailableButton: {
+    backgroundColor: '#dc3545',
+  },
+  voteResults: {
+    fontSize: '12px',
+    color: '#666',
+  },
+  voteCount: {
+    display: 'flex',
+    gap: '10px',
+  },
+  primaryButton: {
+    backgroundColor: '#007bff',
+    color: 'white',
+    padding: '10px 20px',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+  },
+  agendaButton: {
+    backgroundColor: '#28a745',
+    color: 'white',
+    padding: '10px 20px',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    transition: 'background-color 0.3s',
+  },
+  secondaryButton: {
+    backgroundColor: '#6c757d',
+    color: 'white',
+    padding: '8px 16px',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '12px',
+  },
+  loading: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: '200px',
+    fontSize: '16px',
+    color: '#666',
+  },
+  noData: {
+    color: '#999',
+    fontStyle: 'italic',
+    textAlign: 'center' as const,
+    padding: '20px',
+  },
+  noSelection: {
+    color: '#999',
+    fontStyle: 'italic',
+    textAlign: 'center' as const,
+    padding: '40px',
+    fontSize: '16px',
+  },
+  modal: {
+    position: 'fixed' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    padding: '20px',
+    maxWidth: '500px',
+    width: '90%',
+    maxHeight: '80vh',
+    overflow: 'auto',
+  },
+  modalHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '20px',
+  },
+  modalClose: {
+    background: 'none',
+    border: 'none',
+    fontSize: '24px',
+    cursor: 'pointer',
+    color: '#666',
+  },
+  form: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '15px',
+  },
+  formGroup: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '5px',
+  },
+  label: {
+    fontSize: '14px',
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  input: {
+    padding: '10px',
+    border: '1px solid #ddd',
+    borderRadius: '4px',
+    fontSize: '14px',
+  },
+  select: {
+    padding: '10px',
+    border: '1px solid #ddd',
+    borderRadius: '4px',
+    fontSize: '14px',
+    backgroundColor: 'white',
+  },
+  textarea: {
+    padding: '10px',
+    border: '1px solid #ddd',
+    borderRadius: '4px',
+    fontSize: '14px',
+    resize: 'vertical' as const,
+  },
+  modalFooter: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '10px',
+    marginTop: '20px',
+  },
+  agendasModalContent: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    padding: '20px',
+    maxWidth: '600px',
+    width: '90%',
+    maxHeight: '70vh',
+    overflow: 'auto',
+  },
+  agendasContainer: {
+    minHeight: '200px',
+    marginBottom: '20px',
+  },
+  agendasLoading: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: '100px',
+    color: '#666',
+    fontSize: '14px',
+  },
+  agendasList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '15px',
+  },
+  agendaItem: {
+    border: '1px solid #ddd',
+    borderRadius: '6px',
+    padding: '15px',
+    backgroundColor: '#f8f9fa',
+  },
+  agendaTitle: {
+    fontSize: '16px',
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: '8px',
+  },
+  agendaDescription: {
+    fontSize: '14px',
+    color: '#666',
+    lineHeight: '1.4',
+    marginBottom: '8px',
+  },
+  agendaStatus: {
+    fontSize: '12px',
+    color: '#888',
+    fontStyle: 'italic',
+  },
+  noAgendas: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: '100px',
+    color: '#999',
+    fontSize: '14px',
+    fontStyle: 'italic',
+  },
+  agendasModalFooter: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '10px',
+    paddingTop: '15px',
+    borderTop: '1px solid #eee',
+  },
+  schedulingModalContent: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    padding: '20px',
+    maxWidth: '700px',
+    width: '90%',
+    maxHeight: '80vh',
+    overflow: 'auto',
+  },
+  schedulingModalHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '20px',
+    paddingBottom: '15px',
+    borderBottom: '2px solid #eee',
+  },
+  schedulingModalTitle: {
+    fontSize: '24px',
+    color: '#333',
+    margin: 0,
+  },
+  schedulingModalActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '15px',
+  },
+  addCandidateButton: {
+    padding: '8px 16px',
+    backgroundColor: '#007bff',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+  schedulingContent: {
+    minHeight: '200px',
+  },
+  schedulingList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '15px',
+  },
+  schedulingItem: {
+    border: '1px solid #ddd',
+    borderRadius: '8px',
+    padding: '20px',
+    backgroundColor: '#f8f9fa',
+  },
+  schedulingDate: {
+    fontSize: '18px',
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: '15px',
+  },
+  schedulingVoteButtons: {
+    display: 'flex',
+    gap: '10px',
+    marginBottom: '15px',
+  },
+  voteAvailableButton: {
+    padding: '8px 16px',
+    backgroundColor: '#28a745',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+  voteMaybeButton: {
+    padding: '8px 16px',
+    backgroundColor: '#ffc107',
+    color: '#333',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+  voteUnavailableButton: {
+    padding: '8px 16px',
+    backgroundColor: '#dc3545',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+  schedulingVoteResults: {
+    display: 'flex',
+    gap: '15px',
+    fontSize: '14px',
+    color: '#666',
+  },
+  voteResultItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '3px',
+  },
+  noSchedulingData: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: '150px',
+    color: '#999',
+    fontSize: '16px',
+    fontStyle: 'italic',
+  },
+  userVoteDetails: {
+    marginTop: '20px',
+    padding: '15px',
+    backgroundColor: '#fff',
+    borderRadius: '6px',
+    border: '1px solid #eee',
+  },
+  userVoteTitle: {
+    fontSize: '16px',
+    color: '#333',
+    marginBottom: '10px',
+    margin: 0,
+  },
+  userVoteGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+    gap: '10px',
+  },
+  userVoteItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 12px',
+    backgroundColor: '#f8f9fa',
+    borderRadius: '4px',
+    border: '1px solid #e9ecef',
+  },
+  userName: {
+    fontSize: '14px',
+    color: '#333',
+    fontWeight: 'bold',
+  },
+  userVoteStatus: {
+    fontSize: '12px',
+  },
+  userVoteAvailable: {
+    color: '#28a745',
+    fontWeight: 'bold',
+  },
+  userVoteMaybe: {
+    color: '#ffc107',
+    fontWeight: 'bold',
+  },
+  userVoteUnavailable: {
+    color: '#dc3545',
+    fontWeight: 'bold',
+  },
+  userVoteNone: {
+    color: '#6c757d',
+    fontStyle: 'italic',
+  },
+  minutesModalContent: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    padding: '20px',
+    maxWidth: '800px',
+    width: '90%',
+    maxHeight: '80vh',
+    overflow: 'auto',
+  },
+  minutesUploadSection: {
+    marginBottom: '20px',
+    paddingBottom: '15px',
+    borderBottom: '1px solid #eee',
+  },
+  minutesUploadButton: {
+    display: 'inline-block',
+    padding: '10px 20px',
+    backgroundColor: '#007bff',
+    color: 'white',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+  minutesFileList: {
+    minHeight: '200px',
+  },
+  fileListContainer: {
+    border: '1px solid #ddd',
+    borderRadius: '6px',
+    overflow: 'hidden',
+  },
+  fileListHeader: {
+    display: 'grid',
+    gridTemplateColumns: '2fr 1fr 1fr 1fr',
+    gap: '10px',
+    padding: '12px 15px',
+    backgroundColor: '#f8f9fa',
+    borderBottom: '1px solid #ddd',
+    fontSize: '14px',
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  fileListItem: {
+    display: 'grid',
+    gridTemplateColumns: '2fr 1fr 1fr 1fr',
+    gap: '10px',
+    padding: '12px 15px',
+    borderBottom: '1px solid #eee',
+    alignItems: 'center',
+  },
+  fileName: {
+    fontSize: '14px',
+    color: '#333',
+  },
+  fileDate: {
+    fontSize: '12px',
+    color: '#666',
+  },
+  fileSize: {
+    fontSize: '12px',
+    color: '#666',
+  },
+  fileActions: {
+    display: 'flex',
+    gap: '5px',
+  },
+  viewButton: {
+    padding: '4px 8px',
+    backgroundColor: '#28a745',
+    color: 'white',
+    border: 'none',
+    borderRadius: '3px',
+    cursor: 'pointer',
+    fontSize: '11px',
+  },
+  downloadButton: {
+    padding: '4px 8px',
+    backgroundColor: '#17a2b8',
+    color: 'white',
+    border: 'none',
+    borderRadius: '3px',
+    cursor: 'pointer',
+    fontSize: '11px',
+  },
+  deleteButton: {
+    padding: '4px 8px',
+    backgroundColor: '#dc3545',
+    color: 'white',
+    border: 'none',
+    borderRadius: '3px',
+    cursor: 'pointer',
+    fontSize: '11px',
+  },
+  noFiles: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: '150px',
+    color: '#999',
+    fontSize: '14px',
+    fontStyle: 'italic',
+  },
+  fileViewerModal: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    padding: '20px',
+    maxWidth: '900px',
+    width: '95%',
+    maxHeight: '90vh',
+    overflow: 'auto',
+  },
+  fileViewerActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '15px',
+  },
+  downloadButtonLarge: {
+    padding: '8px 16px',
+    backgroundColor: '#17a2b8',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+  fileViewerContent: {
+    minHeight: '400px',
+    marginBottom: '20px',
+    border: '1px solid #ddd',
+    borderRadius: '6px',
+    padding: '20px',
+    backgroundColor: '#f8f9fa',
+  },
+  textViewer: {
+    width: '100%',
+    height: '100%',
+  },
+  textContent: {
+    fontSize: '14px',
+    lineHeight: '1.6',
+    color: '#333',
+    whiteSpace: 'pre-wrap',
+    fontFamily: 'monospace',
+    margin: 0,
+  },
+  pdfViewer: {
+    textAlign: 'center' as const,
+  },
+  pdfPlaceholder: {
+    padding: '40px',
+  },
+  pdfContent: {
+    textAlign: 'left' as const,
+    backgroundColor: 'white',
+    padding: '20px',
+    margin: '20px 0',
+    borderRadius: '4px',
+    border: '1px solid #ddd',
+  },
+  pdfNote: {
+    fontSize: '12px',
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: '20px',
+  },
+  wordViewer: {
+    textAlign: 'center' as const,
+  },
+  wordPlaceholder: {
+    padding: '40px',
+  },
+  wordContent: {
+    textAlign: 'left' as const,
+    backgroundColor: 'white',
+    padding: '20px',
+    margin: '20px 0',
+    borderRadius: '4px',
+    border: '1px solid #ddd',
+  },
+  wordNote: {
+    fontSize: '12px',
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: '20px',
+  },
+  fileViewerFooter: {
+    display: 'flex',
+    justifyContent: 'center',
+    paddingTop: '15px',
+    borderTop: '1px solid #eee',
+  },
+  closeViewerButton: {
+    padding: '10px 30px',
+    backgroundColor: '#6c757d',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+};
+
+export default MeetingManagement;
