@@ -27,7 +27,10 @@
       "Bash(fuser:*)",
       "Bash(kill:*)",
       "Bash(find:*)",
-      "Bash(npx react-scripts:*)"
+      "Bash(npx react-scripts:*)",
+      "Bash(PORT=3105 npm run client)",
+      "Bash(npm install:*)",
+      "Bash(PORT=5105 node server/index.js)"
     ],
     "deny": []
   }

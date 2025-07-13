@@ -9,7 +9,7 @@ export const authApi = {
       email,
       password,
     });
-    return response.data;
+    return response.data as LoginResponse;
   },
 };
 

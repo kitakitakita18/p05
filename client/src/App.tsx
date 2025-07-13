@@ -11,6 +11,7 @@ import UserManagement from './components/UserManagement';
 import AssociationMaster from './components/AssociationMaster';
 import RoleManagement from './components/RoleManagement';
 import MeetingTest from './components/MeetingTest';
+import Chat from './components/Chat';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import './App.css';
@@ -107,6 +108,16 @@ const App: React.FC = () => {
               <ProtectedRoute requiredRoles={['admin', 'chairperson']}>
                 <Layout>
                   <MeetingTest />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/chat"
+            element={
+              <ProtectedRoute requiredRoles={['admin', 'chairperson', 'board_member']}>
+                <Layout>
+                  <Chat />
                 </Layout>
               </ProtectedRoute>
             }

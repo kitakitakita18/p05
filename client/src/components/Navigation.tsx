@@ -18,12 +18,14 @@ const Navigation: React.FC = () => {
   const canManageUsers = user?.role === 'admin';
   // const canManageMeetings = user?.role === 'admin' || user?.role === 'chairperson' || user?.role === 'board_member';
   const canManageAgendas = user?.role === 'admin' || user?.role === 'chairperson';
+  const canUseChat = user?.role === 'admin' || user?.role === 'chairperson' || user?.role === 'board_member';
 
   // ナビゲーション構造の定義
   const getMainCategories = () => [
     { id: 'dashboard', label: 'ダッシュボード', path: '/dashboard' },
     { id: 'meetings', label: '理事会運営', path: '/meetings' },
     ...(canManageAgendas ? [{ id: 'agendas', label: '議題管理', hasSubNav: true }] : []),
+    ...(canUseChat ? [{ id: 'chat', label: 'AIアシスタント', path: '/chat' }] : []),
     ...(canManageUsers ? [{ id: 'admin', label: '管理機能', hasSubNav: true }] : [])
   ];
 

@@ -13,15 +13,18 @@ const MeetingManagement: React.FC = () => {
   const [, setAttendance] = useState<MeetingAttendance[]>([]);
   const [dateCandidates, setDateCandidates] = useState<DateCandidate[]>([]);
   const [votes, setVotes] = useState<any>({});
+  const [userVotes, setUserVotes] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [showNewMeetingForm, setShowNewMeetingForm] = useState(false);
   const [showDateCandidateForm, setShowDateCandidateForm] = useState(false);
   const [newCandidateDate, setNewCandidateDate] = useState('');
+  const [newCandidateStartTime, setNewCandidateStartTime] = useState('');
+  const [newCandidateEndTime, setNewCandidateEndTime] = useState('');
   const [showAgendasModal, setShowAgendasModal] = useState(false);
   const [selectedMeetingAgendas, setSelectedMeetingAgendas] = useState<any[]>([]);
   const [agendasLoading, setAgendasLoading] = useState(false);
   const [showSchedulingModal, setShowSchedulingModal] = useState(false);
-  const [, setSchedulingMeetingId] = useState<number | null>(null);
+  const [schedulingMeetingId, setSchedulingMeetingId] = useState<number | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingMeetingData, setEditingMeetingData] = useState<Meeting | null>(null);
   const [showMinutesModal, setShowMinutesModal] = useState(false);
@@ -88,6 +91,11 @@ const MeetingManagement: React.FC = () => {
       setAttendance(attendanceData);
       setDateCandidates(candidatesData);
       setVotes(votesData);
+      
+      // 各ユーザーの個別投票状況を初期化（実際はAPIから取得すべき）
+      const initialUserVotes: any = {};
+      // 現在はローカル状態のみで管理
+      setUserVotes(initialUserVotes);
     } catch (error) {
       console.error('Failed to fetch meeting details:', error);
     }
@@ -122,19 +130,88 @@ const MeetingManagement: React.FC = () => {
 
   const handleCreateDateCandidate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCandidateDate) return;
+    if (!newCandidateDate || !newCandidateStartTime || !newCandidateEndTime || !schedulingMeetingId) return;
     
-    // 日程調整モーダルでのみ使用
-    setNewCandidateDate('');
-    setShowDateCandidateForm(false);
+    try {
+      // 日付と開始時刻を組み合わせてcandidateDataを作成
+      const candidateDateTime = `${newCandidateDate}T${newCandidateStartTime}`;
+      const candidateData = await api.createDateCandidate(schedulingMeetingId, candidateDateTime);
+      
+      // candidateDataに終了時刻情報を追加（サーバー側で対応していない場合は一時的にクライアント側で管理）
+      const enhancedCandidateData = {
+        ...candidateData,
+        start_time: newCandidateStartTime,
+        end_time: newCandidateEndTime
+      };
+      
+      // 新しい候補日をリストに追加
+      setDateCandidates(prev => [...prev, enhancedCandidateData]);
+      
+      // 次回の候補日のために日付を1日進める（時刻はそのまま）
+      const nextDate = new Date(newCandidateDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      setNewCandidateDate(nextDate.toISOString().split('T')[0]);
+      
+      // 時刻はそのまま維持して連続追加しやすくする
+      // setNewCandidateStartTime(''); // コメントアウト
+      // setNewCandidateEndTime(''); // コメントアウト
+      
+      // フォームは開いたままにして連続追加可能に
+      // setShowDateCandidateForm(false); // コメントアウト
+      alert('候補日が追加されました。続けて候補日を追加できます。');
+    } catch (error) {
+      console.error('Failed to create date candidate:', error);
+      alert('候補日の追加に失敗しました');
+    }
   };
 
   const handleDateVote = async (candidateId: number, availability: string) => {
     try {
       await api.submitDateVote(candidateId, availability);
-      // 日程調整モーダルでのみ使用
+      
+      // 投票状況を再取得
+      if (schedulingMeetingId) {
+        const votesData = await api.getAllDateVotes(schedulingMeetingId);
+        setVotes(votesData);
+      }
+      
+      alert('投票を送信しました');
     } catch (error) {
       console.error('Failed to submit vote:', error);
+      alert('投票の送信に失敗しました');
+    }
+  };
+
+  const handleUserDateVote = async (candidateId: number, userId: number, availability: string) => {
+    try {
+      // 投票権限のチェック：自分の投票のみ変更可能
+      if (user && user.id === userId && canVoteOnDates) {
+        await api.submitDateVote(candidateId, availability);
+        
+        // ローカル状態を更新
+        const voteKey = `${candidateId}_${userId}`;
+        setUserVotes((prev: any) => ({
+          ...prev,
+          [voteKey]: availability
+        }));
+        
+        // 投票状況を再取得
+        if (schedulingMeetingId) {
+          const votesData = await api.getAllDateVotes(schedulingMeetingId);
+          setVotes(votesData);
+        }
+        
+        alert('投票を送信しました');
+      } else {
+        if (!canVoteOnDates) {
+          alert('投票権限がありません');
+        } else {
+          alert('自分の投票のみ変更できます');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to submit vote:', error);
+      alert('投票の送信に失敗しました');
     }
   };
 
@@ -307,7 +384,7 @@ const MeetingManagement: React.FC = () => {
   };
 
   const canManageMeetings = user?.role === 'admin' || user?.role === 'chairperson';
-  // const canVoteOnDates = user?.role === 'admin' || user?.role === 'chairperson' || user?.role === 'board_member';
+  const canVoteOnDates = user?.role === 'admin' || user?.role === 'chairperson' || user?.role === 'board_member';
 
 
   const handleStatusToggle = (status: string) => {
@@ -566,13 +643,13 @@ const MeetingManagement: React.FC = () => {
 
       {/* New Meeting Modal */}
       {showNewMeetingForm && (
-        <div style={styles.modal}>
-          <div style={styles.modalContent}>
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
             <div style={styles.modalHeader}>
               <h3>新しい理事会を作成</h3>
               <button 
                 onClick={() => setShowNewMeetingForm(false)}
-                style={styles.modalClose}
+                style={styles.closeButton}
               >
                 ×
               </button>
@@ -625,27 +702,56 @@ const MeetingManagement: React.FC = () => {
 
       {/* Date Candidate Modal */}
       {showDateCandidateForm && (
-        <div style={styles.modal}>
-          <div style={styles.modalContent}>
+        <div 
+          style={styles.candidateModalOverlay}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowDateCandidateForm(false);
+            }
+          }}
+        >
+          <div style={styles.modal}>
             <div style={styles.modalHeader}>
               <h3>候補日を追加</h3>
               <button 
                 onClick={() => setShowDateCandidateForm(false)}
-                style={styles.modalClose}
+                style={styles.closeButton}
               >
                 ×
               </button>
             </div>
             <form onSubmit={handleCreateDateCandidate} style={styles.form}>
               <div style={styles.formGroup}>
-                <label style={styles.label}>候補日時</label>
+                <label style={styles.label}>候補日</label>
                 <input
-                  type="datetime-local"
+                  type="date"
                   value={newCandidateDate}
                   onChange={(e) => setNewCandidateDate(e.target.value)}
                   style={styles.input}
                   required
                 />
+              </div>
+              <div style={styles.formRow}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>開始時刻</label>
+                  <input
+                    type="time"
+                    value={newCandidateStartTime}
+                    onChange={(e) => setNewCandidateStartTime(e.target.value)}
+                    style={styles.input}
+                    required
+                  />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>終了時刻</label>
+                  <input
+                    type="time"
+                    value={newCandidateEndTime}
+                    onChange={(e) => setNewCandidateEndTime(e.target.value)}
+                    style={styles.input}
+                    required
+                  />
+                </div>
               </div>
               <div style={styles.modalFooter}>
                 <button type="submit" style={styles.primaryButton}>
@@ -653,7 +759,24 @@ const MeetingManagement: React.FC = () => {
                 </button>
                 <button 
                   type="button" 
-                  onClick={() => setShowDateCandidateForm(false)}
+                  onClick={() => {
+                    setNewCandidateDate('');
+                    setNewCandidateStartTime('');
+                    setNewCandidateEndTime('');
+                    setShowDateCandidateForm(false);
+                  }}
+                  style={styles.completeCandidateButton}
+                >
+                  完了
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setNewCandidateDate('');
+                    setNewCandidateStartTime('');
+                    setNewCandidateEndTime('');
+                    setShowDateCandidateForm(false);
+                  }}
                   style={styles.secondaryButton}
                 >
                   キャンセル
@@ -672,7 +795,7 @@ const MeetingManagement: React.FC = () => {
               <h3>議題一覧</h3>
               <button 
                 onClick={() => setShowAgendasModal(false)}
-                style={styles.modalClose}
+                style={styles.closeButton}
               >
                 ×
               </button>
@@ -730,100 +853,126 @@ const MeetingManagement: React.FC = () => {
         </div>
       )}
 
-      {/* Scheduling Modal */}
+      {/* Scheduling Modal - ダッシュボードの出席確認UIと同じスタイル */}
       {showSchedulingModal && (
-        <div style={styles.modal}>
-          <div style={styles.schedulingModalContent}>
-            <div style={styles.schedulingModalHeader}>
-              <h2 style={styles.schedulingModalTitle}>日程調整</h2>
-              <div style={styles.schedulingModalActions}>
-                <button
-                  onClick={() => setShowDateCandidateForm(true)}
-                  style={styles.addCandidateButton}
-                >
-                  候補日を追加
-                </button>
-                <button 
-                  onClick={() => setShowSchedulingModal(false)}
-                  style={styles.modalClose}
-                >
-                  ×
-                </button>
-              </div>
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <div style={styles.modalHeader}>
+              <h3>日程調整</h3>
+              <button 
+                onClick={() => setShowSchedulingModal(false)}
+                style={styles.closeButton}
+              >
+                ×
+              </button>
             </div>
             
-            <div style={styles.schedulingContent}>
+            <div style={styles.schedulingActions}>
+              <button
+                onClick={() => {
+                  // フォームを開く時に初期値を設定
+                  const today = new Date();
+                  const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+                  setNewCandidateDate(nextWeek.toISOString().split('T')[0]);
+                  setNewCandidateStartTime('14:00');
+                  setNewCandidateEndTime('16:00');
+                  setShowDateCandidateForm(true);
+                }}
+                style={styles.addCandidateButton}
+              >
+                候補日を追加
+              </button>
+            </div>
+            
+            <div style={styles.attendanceContent}>
               {dateCandidates.length > 0 ? (
-                <div style={styles.schedulingList}>
+                <div style={styles.attendanceList}>
                   {dateCandidates.map((candidate) => (
-                    <div key={candidate.id} style={styles.schedulingItem}>
-                      <div style={styles.schedulingDate}>
-                        {format(new Date(candidate.candidate_date), 'yyyy年MM月dd日 (E) HH:mm', { locale: ja })}
+                    <div key={candidate.id} style={styles.candidateGroup}>
+                      <div style={styles.candidateDate}>
+                        {candidate.start_time && candidate.end_time 
+                          ? `${format(new Date(candidate.candidate_date), 'yyyy年MM月dd日 (E)', { locale: ja })} ${candidate.start_time}～${candidate.end_time}`
+                          : format(new Date(candidate.candidate_date), 'yyyy年MM月dd日 (E) HH:mm', { locale: ja })
+                        }
                       </div>
                       
-                      <div style={styles.schedulingVoteButtons}>
-                        <button
-                          onClick={() => handleDateVote(candidate.id, 'available')}
-                          style={styles.voteAvailableButton}
-                        >
-                          参加可能
-                        </button>
-                        <button
-                          onClick={() => handleDateVote(candidate.id, 'maybe')}
-                          style={styles.voteMaybeButton}
-                        >
-                          要検討
-                        </button>
-                        <button
-                          onClick={() => handleDateVote(candidate.id, 'unavailable')}
-                          style={styles.voteUnavailableButton}
-                        >
-                          参加不可
-                        </button>
-                      </div>
-
-                      <div style={styles.schedulingVoteResults}>
-                        <span style={styles.voteResultItem}>
-                          ✓ {votes[candidate.id]?.available || 0}
+                      <div style={styles.candidateVoteSummary}>
+                        <span style={styles.voteCount}>
+                          ✓ {votes[candidate.id]?.available || 0}名
                         </span>
-                        <span style={styles.voteResultItem}>
-                          ？ {votes[candidate.id]?.maybe || 0}
+                        <span style={styles.voteCount}>
+                          ？ {votes[candidate.id]?.maybe || 0}名
                         </span>
-                        <span style={styles.voteResultItem}>
-                          ✗ {votes[candidate.id]?.unavailable || 0}
+                        <span style={styles.voteCount}>
+                          ✗ {votes[candidate.id]?.unavailable || 0}名
                         </span>
                       </div>
 
-                      <div style={styles.userVoteDetails}>
-                        <h4 style={styles.userVoteTitle}>ユーザー別参加状況</h4>
-                        <div style={styles.userVoteGrid}>
-                          {users.map((user) => {
-                            // 仮の投票状況（実際はAPIから取得）
-                            const userVote = Math.random() > 0.7 ? null : 
-                                           Math.random() > 0.5 ? 'available' : 
-                                           Math.random() > 0.5 ? 'maybe' : 'unavailable';
-                            
-                            return (
-                              <div key={user.id} style={styles.userVoteItem}>
-                                <span style={styles.userName}>{user.name}</span>
-                                <div style={styles.userVoteStatus}>
-                                  {userVote === 'available' && <span style={styles.userVoteAvailable}>✓ 参加可能</span>}
-                                  {userVote === 'maybe' && <span style={styles.userVoteMaybe}>？ 要検討</span>}
-                                  {userVote === 'unavailable' && <span style={styles.userVoteUnavailable}>✗ 参加不可</span>}
-                                  {userVote === null && <span style={styles.userVoteNone}>- 未選択</span>}
-                                </div>
+                      <div style={styles.userVotesList}>
+                        {users.map((listUser) => {
+                          // 各ユーザーの投票状況を取得（キー: candidateId_userId）
+                          const voteKey = `${candidate.id}_${listUser.id}`;
+                          const userVote = userVotes[voteKey] || null;
+                          const isCurrentUser = user && user.id === listUser.id;
+                          const canUserVote = isCurrentUser && canVoteOnDates;
+                          
+                          return (
+                            <div key={listUser.id} style={styles.attendanceItem}>
+                              <div style={styles.attendanceInfo}>
+                                <span style={styles.memberName}>{listUser.name}</span>
+                                <span style={styles.memberRole}>({listUser.role === 'admin' ? '管理者' : listUser.role === 'chairperson' ? '理事長' : listUser.role === 'board_member' ? '理事' : '住民'})</span>
                               </div>
-                            );
-                          })}
-                        </div>
+                              {/* 投票権限に関係なく、すべてのユーザーの行に投票ボタンを表示 */}
+                              <div style={styles.attendanceButtons}>
+                                <button
+                                  onClick={() => handleUserDateVote(candidate.id, listUser.id, 'available')}
+                                  disabled={!canUserVote}
+                                  style={{
+                                    ...styles.attendanceStatusButton,
+                                    backgroundColor: userVote === 'available' ? '#28a745' : '#e9ecef',
+                                    color: userVote === 'available' ? 'white' : '#333',
+                                    opacity: canUserVote ? 1 : 0.6,
+                                    cursor: canUserVote ? 'pointer' : 'not-allowed'
+                                  }}
+                                >
+                                  参加可能
+                                </button>
+                                <button
+                                  onClick={() => handleUserDateVote(candidate.id, listUser.id, 'maybe')}
+                                  disabled={!canUserVote}
+                                  style={{
+                                    ...styles.attendanceStatusButton,
+                                    backgroundColor: userVote === 'maybe' ? '#ffc107' : '#e9ecef',
+                                    color: userVote === 'maybe' ? '#333' : '#333',
+                                    opacity: canUserVote ? 1 : 0.6,
+                                    cursor: canUserVote ? 'pointer' : 'not-allowed'
+                                  }}
+                                >
+                                  要検討
+                                </button>
+                                <button
+                                  onClick={() => handleUserDateVote(candidate.id, listUser.id, 'unavailable')}
+                                  disabled={!canUserVote}
+                                  style={{
+                                    ...styles.attendanceStatusButton,
+                                    backgroundColor: userVote === 'unavailable' ? '#dc3545' : '#e9ecef',
+                                    color: userVote === 'unavailable' ? 'white' : '#333',
+                                    opacity: canUserVote ? 1 : 0.6,
+                                    cursor: canUserVote ? 'pointer' : 'not-allowed'
+                                  }}
+                                >
+                                  参加不可
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div style={styles.noSchedulingData}>
-                  候補日が設定されていません
-                </div>
+                <div style={styles.loading}>候補日が設定されていません</div>
               )}
             </div>
           </div>
@@ -832,13 +981,13 @@ const MeetingManagement: React.FC = () => {
 
       {/* Edit Meeting Modal */}
       {showEditModal && editingMeetingData && (
-        <div style={styles.modal}>
-          <div style={styles.modalContent}>
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
             <div style={styles.modalHeader}>
               <h3>理事会情報編集</h3>
               <button 
                 onClick={() => setShowEditModal(false)}
-                style={styles.modalClose}
+                style={styles.closeButton}
               >
                 ×
               </button>
@@ -963,7 +1112,7 @@ const MeetingManagement: React.FC = () => {
               <h3>議事録管理</h3>
               <button 
                 onClick={() => setShowMinutesModal(false)}
-                style={styles.modalClose}
+                style={styles.closeButton}
               >
                 ×
               </button>
@@ -1082,7 +1231,7 @@ const MeetingManagement: React.FC = () => {
                 </button>
                 <button 
                   onClick={() => setShowFileViewer(false)}
-                  style={styles.modalClose}
+                  style={styles.closeButton}
                 >
                   ×
                 </button>
@@ -1460,12 +1609,6 @@ const styles = {
     padding: '15px',
     backgroundColor: '#f8f9fa',
   },
-  candidateDate: {
-    fontSize: '16px',
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: '10px',
-  },
   voteButtons: {
     display: 'flex',
     gap: '10px',
@@ -1526,6 +1669,16 @@ const styles = {
     cursor: 'pointer',
     fontSize: '12px',
   },
+  completeCandidateButton: {
+    backgroundColor: '#28a745',
+    color: 'white',
+    padding: '8px 16px',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    transition: 'background-color 0.3s',
+  },
   loading: {
     display: 'flex',
     justifyContent: 'center',
@@ -1548,43 +1701,25 @@ const styles = {
     fontSize: '16px',
   },
   modal: {
-    position: 'fixed' as const,
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-  },
-  modalContent: {
     backgroundColor: 'white',
     borderRadius: '8px',
-    padding: '20px',
-    maxWidth: '500px',
     width: '90%',
-    maxHeight: '80vh',
+    maxWidth: '600px',
+    maxHeight: '90vh',
     overflow: 'auto',
   },
   modalHeader: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: '20px',
-  },
-  modalClose: {
-    background: 'none',
-    border: 'none',
-    fontSize: '24px',
-    cursor: 'pointer',
-    color: '#666',
+    padding: '20px 20px 10px',
+    borderBottom: '1px solid #eee',
   },
   form: {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: '15px',
+    padding: '20px',
   },
   formGroup: {
     display: 'flex',
@@ -2052,6 +2187,125 @@ const styles = {
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: 'bold',
+  },
+  // 日程調整モーダル用の新しいスタイル（ダッシュボードの出席確認UIと同じ）
+  modalOverlay: {
+    position: 'fixed' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  closeButton: {
+    background: 'none',
+    border: 'none',
+    fontSize: '24px',
+    cursor: 'pointer',
+    color: '#666',
+  },
+  schedulingActions: {
+    padding: '0 20px 15px',
+    borderBottom: '1px solid #eee',
+    marginBottom: '15px',
+  },
+  attendanceContent: {
+    padding: '20px',
+  },
+  attendanceList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '20px',
+  },
+  attendanceItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '10px',
+    border: '1px solid #eee',
+    borderRadius: '4px',
+  },
+  attendanceInfo: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  memberName: {
+    fontWeight: 'bold',
+  },
+  memberRole: {
+    fontSize: '12px',
+    color: '#666',
+  },
+  attendanceButtons: {
+    display: 'flex',
+    gap: '5px',
+  },
+  attendanceStatusButton: {
+    padding: '5px 10px',
+    border: '1px solid #ddd',
+    borderRadius: '3px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    color: '#333',
+  },
+  candidateGroup: {
+    border: '1px solid #ddd',
+    borderRadius: '8px',
+    padding: '15px',
+    backgroundColor: '#f8f9fa',
+  },
+  candidateDate: {
+    fontSize: '16px',
+    fontWeight: 'bold',
+    color: 'white',
+    marginBottom: '10px',
+    textAlign: 'center' as const,
+    padding: '8px',
+    backgroundColor: '#007bff',
+    borderRadius: '4px',
+  },
+  candidateVoteSummary: {
+    display: 'flex',
+    gap: '15px',
+    justifyContent: 'center',
+    marginBottom: '15px',
+    padding: '8px',
+    backgroundColor: 'white',
+    borderRadius: '4px',
+    border: '1px solid #ddd',
+  },
+  userVotesList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '8px',
+  },
+  attendanceStatus: {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '5px 10px',
+  },
+  voteStatus: {
+    fontSize: '14px',
+    fontWeight: 'bold',
+    color: '#666',
+  },
+  // 候補日追加モーダル用の高いz-index
+  candidateModalOverlay: {
+    position: 'fixed' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1100, // 日程調整モーダルより高い値
   },
 };
 

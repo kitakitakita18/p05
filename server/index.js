@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const path = require('path');
 const { dbManager, initializeDatabase } = require('./database');
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 5105;
@@ -1495,6 +1495,13 @@ app.post('/api/meetings/generate-schedule', authenticateToken, authorizeRole(['a
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// OpenAI APIルート
+const openaiRoutes = require('./routes/openai');
+
+// 認証が必要なOpenAI APIルートをマウント
+app.use('/api/ai', authenticateToken, openaiRoutes);
+app.use('/api/openai', authenticateToken, openaiRoutes);
 
 // データベース初期化後にサーバーを開始
 const startServer = async () => {

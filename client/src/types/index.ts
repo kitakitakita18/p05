@@ -60,6 +60,8 @@ export interface DateCandidate {
   id: number;
   meeting_id: number;
   candidate_date: string;
+  start_time?: string;
+  end_time?: string;
   created_at: string;
 }
 
