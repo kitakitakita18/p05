@@ -56,6 +56,16 @@ const authorizeRole = (roles) => {
 };
 
 // Routes
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    message: 'Server is running',
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV || 'development'
+  });
+});
+
 // Authentication routes
 app.post('/api/auth/login', async (req, res) => {
   try {
