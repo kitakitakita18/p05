@@ -1,6 +1,5 @@
 {
   "name": "mansion-management-client",
-  "homepage": "https://kitakitakita18.github.io/p05",
   "version": "0.1.0",
   "private": true,
   "dependencies": {

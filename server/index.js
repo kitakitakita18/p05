@@ -1503,6 +1503,17 @@ const openaiRoutes = require('./routes/openai');
 app.use('/api/ai', authenticateToken, openaiRoutes);
 app.use('/api/openai', authenticateToken, openaiRoutes);
 
+// 本番環境でReactのビルド済みファイルをサーブ
+if (process.env.NODE_ENV === 'production') {
+  // Reactのビルド済みファイルの静的サーブ
+  app.use(express.static(path.join(__dirname, '../client/build')));
+  
+  // React SPAのルーティングに対応（すべてのAPIルート以外をindex.htmlに転送）
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
+  });
+}
+
 // データベース初期化後にサーバーを開始
 const startServer = async () => {
   try {
