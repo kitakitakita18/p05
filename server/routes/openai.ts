@@ -28,7 +28,7 @@ router.post("/chat", async (req, res) => {
       }
     );
     
-    res.json(response.data.choices[0].message);
+    res.json((response.data as any).choices[0].message);
   } catch (error: any) {
     console.error("OpenAI API error:", error.response?.data || error.message);
     res.status(500).json({ 
@@ -90,7 +90,7 @@ ${content}
       }
     );
 
-    const summary = response.data.choices[0].message.content;
+    const summary = (response.data as any).choices[0].message.content;
 
     res.json({
       summary: summary,
@@ -153,7 +153,7 @@ router.post("/suggest-agendas", async (req, res) => {
       }
     );
 
-    const suggestions = response.data.choices[0].message.content;
+    const suggestions = (response.data as any).choices[0].message.content;
 
     res.json({
       suggestions: suggestions,

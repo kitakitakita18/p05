@@ -31,7 +31,8 @@
       "Bash(PORT=3105 npm run client)",
       "Bash(npm install:*)",
       "Bash(PORT=5105 node server/index.js)",
-      "Bash(NODE_ENV=production PORT=5105 node server/index.js)"
+      "Bash(NODE_ENV=production PORT=5105 node server/index.js)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }
