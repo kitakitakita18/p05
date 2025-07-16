@@ -4,6 +4,9 @@ const openaiRouter = require("./routes/openai");
 require("dotenv").config();
 
 import { Request, Response } from 'express';
+import authRouter from "./routes/auth";
+import uploadRouter from "./routes/upload";
+import askRouter from "./routes/ask";
 
 const app = express();
 const PORT = process.env.PORT || 5105;
@@ -12,7 +15,10 @@ const PORT = process.env.PORT || 5105;
 app.use(express.json());
 
 // API Routes
+app.use("/api/auth", authRouter);
+app.use("/api/upload", uploadRouter);
 app.use("/api/openai", openaiRouter);
+app.use("/api", askRouter);
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {
