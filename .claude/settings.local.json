@@ -32,9 +32,7 @@
       "Bash(npm install:*)",
       "Bash(PORT=5105 node server/index.js)",
       "Bash(NODE_ENV=production PORT=5105 node server/index.js)",
-      "Bash(npx ts-node:*)",
-      "Bash(cat:*)",
-      "Bash(cp:*)"
+      "Bash(mv:*)"
     ],
     "deny": []
   }

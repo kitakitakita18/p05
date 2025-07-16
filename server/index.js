@@ -8,7 +8,14 @@ const fs = require('fs');
 const axios = require('axios');
 const FormData = require('form-data');
 const { dbManager, initializeDatabase } = require('./database');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+// Render用の環境変数読み込み設定
+const dotenv = require('dotenv');
+dotenv.config({ path: __dirname + '/.env' });
+
+// 環境変数のフォールバック値を設定
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+process.env.API_BASE_URL = process.env.API_BASE_URL || 'https://p05-phgg.onrender.com';
 
 const app = express();
 const PORT = process.env.PORT || 5105;
