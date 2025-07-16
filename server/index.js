@@ -4,6 +4,9 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
+const axios = require('axios');
+const FormData = require('form-data');
 const { dbManager, initializeDatabase } = require('./database');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -1524,12 +1527,54 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
+// PDF自動アップロード処理
+async function uploadPDFOnStartup() {
+  try {
+    const pdfPath = path.join(__dirname, 'kiyaku.pdf');
+    
+    // PDFファイルが存在するかチェック
+    if (!fs.existsSync(pdfPath)) {
+      console.log('kiyaku.pdfファイルが見つかりません。アップロードをスキップします。');
+      return;
+    }
+    
+    // API URLを環境変数から取得、デフォルトは本番環境
+    const apiUrl = process.env.API_BASE_URL || 'https://p05-phgg.onrender.com';
+    
+    // 管理者ユーザーでログインしてJWTトークンを取得
+    const loginResponse = await axios.post(`${apiUrl}/api/auth/login`, {
+      email: 'admin@example.com',
+      password: 'admin123'
+    });
+    
+    const token = loginResponse.data.token;
+    
+    // FormDataを作成
+    const form = new FormData();
+    form.append('pdf', fs.createReadStream(pdfPath));
+    
+    // PDFをアップロード
+    const response = await axios.post(`${apiUrl}/api/upload/pdf`, form, {
+      headers: {
+        ...form.getHeaders(),
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    
+    console.log('PDF自動アップロード成功:', response.data);
+  } catch (err) {
+    console.error('PDF自動アップロード失敗:', err.response?.data || err.message);
+  }
+}
+
 // データベース初期化後にサーバーを開始
 const startServer = async () => {
   try {
     await initializeDatabase();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
+      // サーバー起動後にPDFアップロードを実行
+      uploadPDFOnStartup();
     });
   } catch (error) {
     console.error('サーバーの起動に失敗しました:', error);
