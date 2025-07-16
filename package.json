@@ -62,6 +62,9 @@
   "dependencies": {
   
     
+  "@supabase/supabase-js": "^2.51.0",
+  
+    
   "axios": "^1.10.0",
   
     

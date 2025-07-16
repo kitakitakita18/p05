@@ -5,6 +5,7 @@ import fs from 'fs';
 import pdfParse from 'pdf-parse';
 import { createEmbedding, storeDocument, createEmbeddingsWithChunks, storeDocumentWithChunks } from '../utils/embedding';
 import { authenticateToken } from '../middlewares/auth';
+import { supabase } from '../utils/supabaseClient';
 
 // Request型の拡張
 declare global {
@@ -74,24 +75,27 @@ router.post('/pdf', authenticateToken, upload.single('pdf'), async (req, res) =>
     // チャンク化された埋め込み生成
     const chunks = await createEmbeddingsWithChunks(extractedText);
 
-    // データベースに保存
-    const documentIds = await storeDocumentWithChunks({
-      fileName,
-      filePath,
-      content: extractedText,
-      chunks,
-      uploadedBy: req.user?.id,
-      uploadedAt: new Date()
-    });
+    // Supabaseに保存
+    const unionId = 'default'; // TODO: 実際の組合IDを設定
+    const regulationName = fileName;
+    
+    for (let i = 0; i < chunks.length; i++) {
+      const { error } = await supabase.from('regulation_chunks').insert({
+        unionId,
+        regulationName,
+        chunk: chunks[i].text,
+        embedding: chunks[i].embedding, // OpenAI生成のembeddingベクトル
+      });
+      if (error) throw error;
+    }
 
     res.json({
       success: true,
-      documentIds,
+      message: 'Supabaseに保存しました',
       fileName,
       chunksCount: chunks.length,
       totalTokens: chunks.reduce((sum, chunk) => sum + chunk.tokens, 0),
       extractedText: extractedText.substring(0, 500) + '...', // プレビュー用
-      message: `PDFが正常にアップロードされ、${chunks.length}個のチャンクに分割して処理されました`
     });
 
   } catch (error) {

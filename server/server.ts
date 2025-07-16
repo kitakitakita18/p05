@@ -1,12 +1,18 @@
+import path from "path";
+import dotenv from "dotenv";
+
+// server/.env を明示的に指定
+dotenv.config({ path: path.resolve(__dirname, ".env") });
+
 import express from "express";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import multer from "multer";
-import path from "path";
 const { dbManager, initializeDatabase } = require('./database');
 import openaiRouter from "./routes/openai";
-require('dotenv').config();
+import supabaseTestRouter from "./routes/supabaseTest";
+import "./utils/supabaseClient"; // Supabase接続確認を実行
 
 const app = express();
 const PORT = process.env.PORT || 5105;
@@ -62,6 +68,7 @@ const authorizeRole = (roles: string[]) => {
 
 // OpenAI APIルート
 app.use("/api/openai", authenticateToken, openaiRouter);
+app.use("/api/supabase-test", supabaseTestRouter);
 
 // Login endpoint
 app.post('/api/auth/login', async (req, res) => {

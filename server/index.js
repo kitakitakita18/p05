@@ -1512,9 +1512,15 @@ app.post('/api/meetings/generate-schedule', authenticateToken, authorizeRole(['a
 // OpenAI APIルート
 const openaiRoutes = require('./routes/openai');
 
+// Supabaseテストルート
+const supabaseTest = require('./routes/supabaseTest');
+
 // 認証が必要なOpenAI APIルートをマウント
 app.use('/api/ai', authenticateToken, openaiRoutes);
 app.use('/api/openai', authenticateToken, openaiRoutes);
+
+// Supabaseテストルートをマウント
+app.use('/api/supabase-test', supabaseTest);
 
 // 本番環境でReactのビルド済みファイルをサーブ
 if (process.env.NODE_ENV === 'production') {
