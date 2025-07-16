@@ -5,6 +5,7 @@ import { Meeting, MeetingAttendance, DateCandidate } from '../types';
 import { api } from '../utils/api';
 import { format } from 'date-fns';
 import ja from 'date-fns/locale/ja';
+import MinutesPopup from './MinutesPopup';
 
 const MeetingManagement: React.FC = () => {
   const { user } = useAuth();
@@ -27,12 +28,10 @@ const MeetingManagement: React.FC = () => {
   const [schedulingMeetingId, setSchedulingMeetingId] = useState<number | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingMeetingData, setEditingMeetingData] = useState<Meeting | null>(null);
-  const [showMinutesModal, setShowMinutesModal] = useState(false);
-  const [, setMinutesMeetingId] = useState<number | null>(null);
-  const [minutesFiles, setMinutesFiles] = useState<any[]>([]);
+  const [showMinutesPopup, setShowMinutesPopup] = useState(false);
+  const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
+  const [selectedMeetingTitle, setSelectedMeetingTitle] = useState<string>('');
   const [users, setUsers] = useState<any[]>([]);
-  const [showFileViewer, setShowFileViewer] = useState(false);
-  const [viewingFile, setViewingFile] = useState<any>(null);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(['tentative', 'confirmed']);
   const [sortBy, setSortBy] = useState<'date' | 'title'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -231,68 +230,12 @@ const MeetingManagement: React.FC = () => {
     setShowEditModal(true);
   };
 
-  const handleShowMinutesModal = (meetingId: number) => {
-    setMinutesMeetingId(meetingId);
-    // 仮の議事録ファイルデータ（実際のファイルオブジェクトを含む）
-    setMinutesFiles([
-      { 
-        id: 1, 
-        name: '第1回理事会議事録.pdf', 
-        uploadDate: '2025-07-10', 
-        size: '245KB',
-        type: 'application/pdf',
-        url: null, // 実際のアプリではサーバーからのURLまたはFile object
-        content: '第1回理事会議事録\n\n日時: 2025年7月10日 14:00-16:00\n場所: マンション集会室\n\n議題:\n1. 管理費について\n2. 大規模修繕計画\n3. その他'
-      },
-      { 
-        id: 2, 
-        name: '理事会資料.docx', 
-        uploadDate: '2025-07-08', 
-        size: '128KB',
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        url: null,
-        content: '理事会資料\n\n予算案について\n- 今年度の収支\n- 来年度の予算計画\n- 修繕積立金の状況'
-      },
-      { 
-        id: 3, 
-        name: 'メモ.txt', 
-        uploadDate: '2025-07-05', 
-        size: '2KB',
-        type: 'text/plain',
-        url: null,
-        content: '理事会メモ\n\n要検討事項:\n- ペット飼育規約の見直し\n- 駐車場の利用ルール\n- 防災対策の強化'
-      }
-    ]);
-    setShowMinutesModal(true);
+  const handleShowMinutesModal = (meetingId: number, meetingTitle?: string) => {
+    setSelectedMeetingId(meetingId);
+    setSelectedMeetingTitle(meetingTitle || '');
+    setShowMinutesPopup(true);
   };
 
-  const handleViewFile = (file: any) => {
-    setViewingFile(file);
-    setShowFileViewer(true);
-  };
-
-  const handleDownloadFile = (file: any) => {
-    // ファイルダウンロード機能
-    let blob;
-    
-    if (file.originalFile) {
-      // 元のファイルオブジェクトがある場合はそれを使用
-      blob = file.originalFile;
-    } else {
-      // ファイルオブジェクトがない場合はcontentから作成
-      blob = new Blob([file.content], { type: file.type });
-    }
-    
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = file.name;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-    alert(`「${file.name}」をダウンロードしました`);
-  };
 
   const handleShowSchedulingModal = async (meetingId: number) => {
     setSchedulingMeetingId(meetingId);
@@ -600,7 +543,7 @@ const MeetingManagement: React.FC = () => {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleShowMinutesModal(meeting.id);
+                          handleShowMinutesModal(meeting.id, meeting.title);
                         }}
                         style={styles.minutesButtonSmall}
                         title="議事録管理"
@@ -1104,191 +1047,13 @@ const MeetingManagement: React.FC = () => {
         </div>
       )}
 
-      {/* Minutes Management Modal */}
-      {showMinutesModal && (
-        <div style={styles.modal}>
-          <div style={styles.minutesModalContent}>
-            <div style={styles.modalHeader}>
-              <h3>議事録管理</h3>
-              <button 
-                onClick={() => setShowMinutesModal(false)}
-                style={styles.closeButton}
-              >
-                ×
-              </button>
-            </div>
-            
-            <div style={styles.minutesUploadSection}>
-              <label style={styles.minutesUploadButton}>
-                ファイルを追加
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx,.txt"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onload = (event) => {
-                        const newFile = {
-                          id: Date.now(),
-                          name: file.name,
-                          uploadDate: new Date().toISOString().split('T')[0],
-                          size: `${Math.round(file.size / 1024)}KB`,
-                          type: file.type,
-                          content: event.target?.result as string,
-                          originalFile: file
-                        };
-                        setMinutesFiles([...minutesFiles, newFile]);
-                        alert(`ファイル「${file.name}」を追加しました`);
-                      };
-                      
-                      if (file.type.startsWith('text/')) {
-                        reader.readAsText(file);
-                      } else {
-                        // バイナリファイルの場合は内容を読み込まず、メタデータのみ保存
-                        const newFile = {
-                          id: Date.now(),
-                          name: file.name,
-                          uploadDate: new Date().toISOString().split('T')[0],
-                          size: `${Math.round(file.size / 1024)}KB`,
-                          type: file.type,
-                          content: `${file.name}\n\nファイルタイプ: ${file.type}\nサイズ: ${Math.round(file.size / 1024)}KB\n\n※ このファイルはバイナリ形式です。閲覧には専用のアプリケーションが必要です。`,
-                          originalFile: file
-                        };
-                        setMinutesFiles([...minutesFiles, newFile]);
-                        alert(`ファイル「${file.name}」を追加しました`);
-                      }
-                    }
-                  }}
-                  style={styles.hiddenInput}
-                />
-              </label>
-            </div>
-
-            <div style={styles.minutesFileList}>
-              {minutesFiles.length > 0 ? (
-                <div style={styles.fileListContainer}>
-                  <div style={styles.fileListHeader}>
-                    <span>ファイル名</span>
-                    <span>アップロード日</span>
-                    <span>サイズ</span>
-                    <span>操作</span>
-                  </div>
-                  {minutesFiles.map((file) => (
-                    <div key={file.id} style={styles.fileListItem}>
-                      <span style={styles.fileName}>{file.name}</span>
-                      <span style={styles.fileDate}>{file.uploadDate}</span>
-                      <span style={styles.fileSize}>{file.size}</span>
-                      <div style={styles.fileActions}>
-                        <button
-                          onClick={() => handleViewFile(file)}
-                          style={styles.viewButton}
-                        >
-                          閲覧
-                        </button>
-                        <button
-                          onClick={() => handleDownloadFile(file)}
-                          style={styles.downloadButton}
-                        >
-                          DL
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (window.confirm(`「${file.name}」を削除しますか？`)) {
-                              setMinutesFiles(minutesFiles.filter(f => f.id !== file.id));
-                            }
-                          }}
-                          style={styles.deleteButton}
-                        >
-                          削除
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={styles.noFiles}>
-                  議事録ファイルがありません
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* File Viewer Modal */}
-      {showFileViewer && viewingFile && (
-        <div style={styles.modal}>
-          <div style={styles.fileViewerModal}>
-            <div style={styles.modalHeader}>
-              <h3>ファイル閲覧: {viewingFile.name}</h3>
-              <div style={styles.fileViewerActions}>
-                <button
-                  onClick={() => handleDownloadFile(viewingFile)}
-                  style={styles.downloadButtonLarge}
-                >
-                  ダウンロード
-                </button>
-                <button 
-                  onClick={() => setShowFileViewer(false)}
-                  style={styles.closeButton}
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-            
-            <div style={styles.fileViewerContent}>
-              {viewingFile.type === 'text/plain' && (
-                <div style={styles.textViewer}>
-                  <pre style={styles.textContent}>{viewingFile.content}</pre>
-                </div>
-              )}
-              
-              {viewingFile.type === 'application/pdf' && (
-                <div style={styles.pdfViewer}>
-                  <div style={styles.pdfPlaceholder}>
-                    <h4>PDF文書</h4>
-                    <p>PDF文書の内容:</p>
-                    <div style={styles.pdfContent}>
-                      <pre>{viewingFile.content}</pre>
-                    </div>
-                    <p style={styles.pdfNote}>
-                      ※ 実際のPDF表示には専用のビューワーが必要です。<br/>
-                      ダウンロードしてPDFリーダーで開いてください。
-                    </p>
-                  </div>
-                </div>
-              )}
-              
-              {viewingFile.type.includes('word') && (
-                <div style={styles.wordViewer}>
-                  <div style={styles.wordPlaceholder}>
-                    <h4>Word文書</h4>
-                    <p>文書の内容:</p>
-                    <div style={styles.wordContent}>
-                      <pre>{viewingFile.content}</pre>
-                    </div>
-                    <p style={styles.wordNote}>
-                      ※ 実際のWord文書表示には専用のビューワーが必要です。<br/>
-                      ダウンロードしてWord等で開いてください。
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            <div style={styles.fileViewerFooter}>
-              <button
-                onClick={() => setShowFileViewer(false)}
-                style={styles.closeViewerButton}
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 議事録ポップアップ */}
+      <MinutesPopup
+        isOpen={showMinutesPopup}
+        onClose={() => setShowMinutesPopup(false)}
+        meetingId={selectedMeetingId || 0}
+        meetingTitle={selectedMeetingTitle}
+      />
     </div>
   );
 };
@@ -1984,209 +1749,6 @@ const styles = {
   userVoteNone: {
     color: '#6c757d',
     fontStyle: 'italic',
-  },
-  minutesModalContent: {
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    padding: '20px',
-    maxWidth: '800px',
-    width: '90%',
-    maxHeight: '80vh',
-    overflow: 'auto',
-  },
-  minutesUploadSection: {
-    marginBottom: '20px',
-    paddingBottom: '15px',
-    borderBottom: '1px solid #eee',
-  },
-  minutesUploadButton: {
-    display: 'inline-block',
-    padding: '10px 20px',
-    backgroundColor: '#007bff',
-    color: 'white',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 'bold',
-  },
-  minutesFileList: {
-    minHeight: '200px',
-  },
-  fileListContainer: {
-    border: '1px solid #ddd',
-    borderRadius: '6px',
-    overflow: 'hidden',
-  },
-  fileListHeader: {
-    display: 'grid',
-    gridTemplateColumns: '2fr 1fr 1fr 1fr',
-    gap: '10px',
-    padding: '12px 15px',
-    backgroundColor: '#f8f9fa',
-    borderBottom: '1px solid #ddd',
-    fontSize: '14px',
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  fileListItem: {
-    display: 'grid',
-    gridTemplateColumns: '2fr 1fr 1fr 1fr',
-    gap: '10px',
-    padding: '12px 15px',
-    borderBottom: '1px solid #eee',
-    alignItems: 'center',
-  },
-  fileName: {
-    fontSize: '14px',
-    color: '#333',
-  },
-  fileDate: {
-    fontSize: '12px',
-    color: '#666',
-  },
-  fileSize: {
-    fontSize: '12px',
-    color: '#666',
-  },
-  fileActions: {
-    display: 'flex',
-    gap: '5px',
-  },
-  viewButton: {
-    padding: '4px 8px',
-    backgroundColor: '#28a745',
-    color: 'white',
-    border: 'none',
-    borderRadius: '3px',
-    cursor: 'pointer',
-    fontSize: '11px',
-  },
-  downloadButton: {
-    padding: '4px 8px',
-    backgroundColor: '#17a2b8',
-    color: 'white',
-    border: 'none',
-    borderRadius: '3px',
-    cursor: 'pointer',
-    fontSize: '11px',
-  },
-  deleteButton: {
-    padding: '4px 8px',
-    backgroundColor: '#dc3545',
-    color: 'white',
-    border: 'none',
-    borderRadius: '3px',
-    cursor: 'pointer',
-    fontSize: '11px',
-  },
-  noFiles: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    height: '150px',
-    color: '#999',
-    fontSize: '14px',
-    fontStyle: 'italic',
-  },
-  fileViewerModal: {
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    padding: '20px',
-    maxWidth: '900px',
-    width: '95%',
-    maxHeight: '90vh',
-    overflow: 'auto',
-  },
-  fileViewerActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '15px',
-  },
-  downloadButtonLarge: {
-    padding: '8px 16px',
-    backgroundColor: '#17a2b8',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 'bold',
-  },
-  fileViewerContent: {
-    minHeight: '400px',
-    marginBottom: '20px',
-    border: '1px solid #ddd',
-    borderRadius: '6px',
-    padding: '20px',
-    backgroundColor: '#f8f9fa',
-  },
-  textViewer: {
-    width: '100%',
-    height: '100%',
-  },
-  textContent: {
-    fontSize: '14px',
-    lineHeight: '1.6',
-    color: '#333',
-    whiteSpace: 'pre-wrap',
-    fontFamily: 'monospace',
-    margin: 0,
-  },
-  pdfViewer: {
-    textAlign: 'center' as const,
-  },
-  pdfPlaceholder: {
-    padding: '40px',
-  },
-  pdfContent: {
-    textAlign: 'left' as const,
-    backgroundColor: 'white',
-    padding: '20px',
-    margin: '20px 0',
-    borderRadius: '4px',
-    border: '1px solid #ddd',
-  },
-  pdfNote: {
-    fontSize: '12px',
-    color: '#666',
-    fontStyle: 'italic',
-    marginTop: '20px',
-  },
-  wordViewer: {
-    textAlign: 'center' as const,
-  },
-  wordPlaceholder: {
-    padding: '40px',
-  },
-  wordContent: {
-    textAlign: 'left' as const,
-    backgroundColor: 'white',
-    padding: '20px',
-    margin: '20px 0',
-    borderRadius: '4px',
-    border: '1px solid #ddd',
-  },
-  wordNote: {
-    fontSize: '12px',
-    color: '#666',
-    fontStyle: 'italic',
-    marginTop: '20px',
-  },
-  fileViewerFooter: {
-    display: 'flex',
-    justifyContent: 'center',
-    paddingTop: '15px',
-    borderTop: '1px solid #eee',
-  },
-  closeViewerButton: {
-    padding: '10px 30px',
-    backgroundColor: '#6c757d',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 'bold',
   },
   // 日程調整モーダル用の新しいスタイル（ダッシュボードの出席確認UIと同じ）
   modalOverlay: {
