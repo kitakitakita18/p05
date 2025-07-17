@@ -4,15 +4,19 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.app = void 0;
+const path_1 = __importDefault(require("path"));
+const dotenv_1 = __importDefault(require("dotenv"));
+// server/.env を明示的に指定
+dotenv_1.default.config({ path: path_1.default.resolve(__dirname, ".env") });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const multer_1 = __importDefault(require("multer"));
-const path_1 = __importDefault(require("path"));
 const { dbManager, initializeDatabase } = require('./database');
 const openai_1 = __importDefault(require("./routes/openai"));
-require('dotenv').config();
+const supabaseTest_1 = __importDefault(require("./routes/supabaseTest"));
+require("./utils/supabaseClient"); // Supabase接続確認を実行
 const app = (0, express_1.default)();
 exports.app = app;
 const PORT = process.env.PORT || 5105;
@@ -55,6 +59,7 @@ const authorizeRole = (roles) => {
 };
 // OpenAI APIルート
 app.use("/api/openai", authenticateToken, openai_1.default);
+app.use("/api/supabase-test", supabaseTest_1.default);
 // Login endpoint
 app.post('/api/auth/login', async (req, res) => {
     try {
