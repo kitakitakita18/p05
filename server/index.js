@@ -1519,12 +1519,16 @@ app.post('/api/meetings/generate-schedule', authenticateToken, authorizeRole(['a
 // OpenAI APIルート
 const openaiRoutes = require('./routes/openai');
 
+// Search APIルート
+const searchRoutes = require('./routes/search');
+
 // Supabaseテストルート
 //const supabaseTest = require('./routes/supabaseTest');
 
-// 認証が必要なOpenAI APIルートをマウント
+// 認証が必要なAPIルートをマウント
 app.use('/api/ai', authenticateToken, openaiRoutes);
 app.use('/api/openai', authenticateToken, openaiRoutes);
+app.use('/api/search', authenticateToken, searchRoutes);
 
 // TypeScriptで実装されたSupabase検索ルートを追加
 // 注意：これはTypeScriptファイルなので、実際の使用にはコンパイルが必要
