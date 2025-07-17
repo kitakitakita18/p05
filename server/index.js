@@ -1526,6 +1526,11 @@ const openaiRoutes = require('./routes/openai');
 app.use('/api/ai', authenticateToken, openaiRoutes);
 app.use('/api/openai', authenticateToken, openaiRoutes);
 
+// TypeScriptで実装されたSupabase検索ルートを追加
+// 注意：これはTypeScriptファイルなので、実際の使用にはコンパイルが必要
+// app.use('/api/search', authenticateToken, require('./routes/search'));
+// app.use('/api/upload', authenticateToken, require('./routes/upload'));
+
 // Supabaseテストルートをマウント
 //app.use('/api/supabase-test', supabaseTest);
 
