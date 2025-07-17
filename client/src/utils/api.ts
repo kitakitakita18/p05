@@ -302,6 +302,16 @@ export const api = {
     }, { headers: getAuthHeaders() });
     return response.data as any;
   },
+
+  // ベクトル検索API
+  searchDocuments: async (question: string, matchThreshold: number = 0.7, matchCount: number = 3): Promise<{question: string, results: any[]}> => {
+    const response = await axios.post(`${API_BASE_URL}/search`, {
+      question,
+      matchThreshold,
+      matchCount
+    }, { headers: getAuthHeaders() });
+    return response.data as any;
+  },
 };
 
 // ユーザー指定の実装に合わせた個別エクスポート
@@ -315,6 +325,22 @@ export const sendChatMessage = async (messages: any[]): Promise<string> => {
     return (response.data as any).content;
   } catch (error: any) {
     console.error('sendChatMessage error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const searchDocuments = async (question: string, matchThreshold: number = 0.7, matchCount: number = 3): Promise<{question: string, results: any[]}> => {
+  console.log('Searching documents for:', question);
+  console.log('Headers:', getAuthHeaders());
+  try {
+    const response = await axios.post(`${API_BASE_URL}/search`, {
+      question,
+      matchThreshold,
+      matchCount
+    }, { headers: getAuthHeaders() });
+    return response.data as any;
+  } catch (error: any) {
+    console.error('searchDocuments error:', error.response?.data || error.message);
     throw error;
   }
 };

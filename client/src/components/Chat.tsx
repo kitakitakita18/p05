@@ -1,21 +1,53 @@
 import React, { useState } from "react";
-import { sendChatMessage } from "../utils/api";
+import { sendChatMessage, searchDocuments } from "../utils/api";
 
 const Chat = () => {
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
 
   const handleSend = async () => {
     if (!input.trim()) return;
 
     const userMessage = { role: "user", content: input };
+    const userInput = input;
     setMessages([...messages, userMessage]);
     setInput("");
     setLoading(true);
+    setShowSearchResults(false);
 
     try {
-      const reply = await sendChatMessage([...messages, userMessage]);
+      // 🥇 ステップ1: まずベクトル検索APIを呼び出す
+      console.log('🔍 RAG検索を実行中...');
+      const searchResponse = await searchDocuments(userInput);
+      console.log('🔍 検索結果:', searchResponse);
+      
+      const searchMatches = searchResponse.results || [];
+      setSearchResults(searchMatches);
+      
+      // 検索結果があれば表示
+      if (searchMatches.length > 0) {
+        setShowSearchResults(true);
+      }
+
+      // 📝 検索結果を整形してコンテキストとして追加
+      const context = searchMatches.length > 0 
+        ? searchMatches.map((match: any) => `- ${match.chunk}`).join('\n')
+        : '';
+
+      // 🥈 ステップ2: 検索結果を含めてchatAPIに送信
+      const enhancedMessages = [...messages, userMessage];
+      if (context) {
+        // システムメッセージとして検索結果を追加
+        enhancedMessages.unshift({
+          role: "system",
+          content: `以下の規約・文書情報を参考に回答してください：\n\n${context}`
+        });
+      }
+
+      const reply = await sendChatMessage(enhancedMessages);
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     } catch (error: any) {
       console.error('Chat error:', error);
@@ -84,6 +116,34 @@ const Chat = () => {
             </div>
           ))
         )}
+        
+        {/* 検索結果の表示 */}
+        {showSearchResults && searchResults.length > 0 && (
+          <div style={styles.searchResultsContainer}>
+            <div style={styles.searchResultsHeader}>
+              <strong>🔍 関連する規約・文書</strong>
+              <button 
+                onClick={() => setShowSearchResults(false)}
+                style={styles.closeButton}
+              >
+                ×
+              </button>
+            </div>
+            <div style={styles.searchResultsList}>
+              {searchResults.map((result: any, idx: number) => (
+                <div key={idx} style={styles.searchResult}>
+                  <div style={styles.searchResultSimilarity}>
+                    類似度: {(result.similarity * 100).toFixed(1)}%
+                  </div>
+                  <div style={styles.searchResultContent}>
+                    {result.chunk}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
         {loading && (
           <div style={styles.messageWrapper}>
             <div style={{...styles.message, ...styles.assistantMessage}}>
@@ -242,6 +302,51 @@ const styles = {
   sendButtonDisabled: {
     backgroundColor: '#6c757d',
     cursor: 'not-allowed',
+  },
+  searchResultsContainer: {
+    backgroundColor: '#f8f9fa',
+    border: '1px solid #dee2e6',
+    borderRadius: '8px',
+    margin: '10px 0',
+    padding: '15px',
+  },
+  searchResultsHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '10px',
+    fontSize: '14px',
+    color: '#495057',
+  },
+  closeButton: {
+    background: 'none',
+    border: 'none',
+    fontSize: '16px',
+    cursor: 'pointer',
+    color: '#6c757d',
+    padding: '0 4px',
+  },
+  searchResultsList: {
+    maxHeight: '200px',
+    overflowY: 'auto' as const,
+  },
+  searchResult: {
+    backgroundColor: 'white',
+    border: '1px solid #e9ecef',
+    borderRadius: '4px',
+    padding: '10px',
+    marginBottom: '8px',
+    fontSize: '13px',
+  },
+  searchResultSimilarity: {
+    color: '#6c757d',
+    fontSize: '11px',
+    marginBottom: '5px',
+    fontWeight: 'bold',
+  },
+  searchResultContent: {
+    lineHeight: '1.4',
+    color: '#333',
   },
 };
 
