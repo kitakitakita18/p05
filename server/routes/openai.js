@@ -44,12 +44,53 @@ router.post('/chat', async (req, res) => {
 
   try {
     console.log('💬 チャット処理開始 - メッセージ数:', messages.length);
+    
+    // 最新のユーザーメッセージを取得
+    const latestUserMessage = messages.filter(msg => msg.role === 'user').pop();
+    let searchResults = null;
+    
+    // 文書検索を実行
+    if (latestUserMessage && latestUserMessage.content && supabase) {
+      try {
+        console.log('🔍 文書検索を実行中...');
+        
+        // OpenAI埋め込みAPIを使用して検索
+        const embeddingResponse = await openai.embeddings.create({
+          model: 'text-embedding-ada-002',
+          input: latestUserMessage.content,
+        });
+
+        const queryEmbedding = embeddingResponse.data[0].embedding;
+
+        // Supabaseで検索を実行
+        const { data: searchData } = await supabase.rpc('match_regulation_chunks', {
+          query_embedding: queryEmbedding,
+          match_threshold: 0.8,
+          match_count: 3,
+        });
+
+        if (searchData && searchData.length > 0) {
+          searchResults = searchData;
+          console.log(`🔍 検索結果: ${searchResults.length}件`);
+        }
+      } catch (searchError) {
+        console.warn('⚠️ 検索エラー:', searchError.message);
+      }
+    }
+
+    // システムプロンプトに検索結果を追加
+    const systemMessage = {
+      role: 'system',
+      content: searchResults 
+        ? `あなたはマンション理事会の専門アシスタントです。以下の文書から関連情報を見つけました：\n\n${searchResults.map(result => `- ${result.content} (類似度: ${result.similarity.toFixed(2)})`).join('\n')}\n\nこの情報を参考にして、ユーザーの質問に回答してください。`
+        : 'あなたはマンション理事会の専門アシスタントです。理事会に関する質問にお答えします。'
+    };
 
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
         model: 'gpt-4o-mini',
-        messages: messages,
+        messages: [systemMessage, ...messages],
         max_tokens: 1000,
         temperature: 0.7,
       },
@@ -61,7 +102,14 @@ router.post('/chat', async (req, res) => {
       }
     );
     
-    res.json(response.data.choices[0].message);
+    const aiResponse = response.data.choices[0].message;
+    
+    // 検索結果がある場合は追加情報として返す
+    res.json({
+      ...aiResponse,
+      searchResults: searchResults || [],
+      hasSearchResults: !!searchResults
+    });
   } catch (error) {
     console.error('OpenAI API error:', error.response?.data || error.message);
     res.status(500).json({ 

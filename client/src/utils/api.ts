@@ -278,11 +278,11 @@ export const api = {
   },
 
   // バックエンド経由OpenAI API (ユーザー指定の実装)
-  sendChatMessage: async (messages: any[]): Promise<string> => {
+  sendChatMessage: async (messages: any[]): Promise<{content: string, searchResults?: any[], hasSearchResults?: boolean}> => {
     const response = await axios.post(`${API_BASE_URL}/openai/chat`, { 
       messages 
     }, { headers: getAuthHeaders() });
-    return (response.data as any).content;
+    return response.data as any;
   },
 
   summarizeMinutes: async (content: string, meetingTitle: string, meetingDate?: string): Promise<{summary: string, original_length: number, summary_length: number}> => {
@@ -315,14 +315,14 @@ export const api = {
 };
 
 // ユーザー指定の実装に合わせた個別エクスポート
-export const sendChatMessage = async (messages: any[]): Promise<string> => {
+export const sendChatMessage = async (messages: any[]): Promise<{content: string, searchResults?: any[], hasSearchResults?: boolean}> => {
   console.log('Sending chat message to:', `${API_BASE_URL}/openai/chat`);
   console.log('Headers:', getAuthHeaders());
   try {
     const response = await axios.post(`${API_BASE_URL}/openai/chat`, { 
       messages 
     }, { headers: getAuthHeaders() });
-    return (response.data as any).content;
+    return response.data as any;
   } catch (error: any) {
     console.error('sendChatMessage error:', error.response?.data || error.message);
     throw error;

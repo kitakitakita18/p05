@@ -19,39 +19,23 @@ const Chat = () => {
     setSearchLoading(true);
 
     try {
-      // 🥇 ステップ1: ベクトル検索を実行
-      console.log('🔍 ベクトル検索を実行中...');
-      const searchResponse = await searchDocuments(userInput);
-      console.log('🔍 検索結果:', searchResponse);
-      
-      const searchMatches = searchResponse.results || [];
-      setSearchResults(searchMatches);
-      setSearchLoading(false);
-      
-      // 検索結果があれば表示
-      if (searchMatches.length > 0) {
-        setShowSearchResults(true);
-      }
-
-      // 🥈 ステップ2: 検索結果を含めてチャットAPIに送信
       setLoading(true);
       
-      // 検索結果を整形してコンテキストとして追加
-      const context = searchMatches.length > 0 
-        ? searchMatches.map((match: any) => `- ${match.chunk}`).join('\n')
-        : '';
-
-      const enhancedMessages = [...messages, userMessage];
-      if (context) {
-        // システムメッセージとして検索結果を追加
-        enhancedMessages.unshift({
+      const response = await sendChatMessage([...messages, userMessage]);
+      
+      // AIの応答を追加
+      setMessages((prev) => [...prev, { role: "assistant", content: response.content }]);
+      
+      // 検索結果がある場合は別途表示
+      if (response.hasSearchResults && response.searchResults && response.searchResults.length > 0) {
+        const searchResultsMessage = {
           role: "system",
-          content: `以下の規約・文書情報を参考に回答してください：\n\n${context}`
-        });
+          content: `📄 関連文書が見つかりました:\n\n${response.searchResults.map((result: any, index: number) => 
+            `${index + 1}. ${result.content.substring(0, 150)}${result.content.length > 150 ? '...' : ''}\n   (類似度: ${(result.similarity * 100).toFixed(1)}%)`
+          ).join('\n\n')}`
+        };
+        setMessages((prev) => [...prev, searchResultsMessage]);
       }
-
-      const reply = await sendChatMessage(enhancedMessages);
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     } catch (error: any) {
       console.error('Chat error:', error);
       const errorMessage = error.response?.data?.error || error.message || "AI応答エラー";
@@ -110,10 +94,14 @@ const Chat = () => {
             <div key={idx} style={styles.messageWrapper}>
               <div style={{
                 ...styles.message,
-                ...(msg.role === 'user' ? styles.userMessage : styles.assistantMessage)
+                ...(msg.role === 'user' ? styles.userMessage : 
+                    msg.role === 'system' ? styles.systemMessage : styles.assistantMessage)
               }}>
                 <div style={styles.messageRole}>
-                  <strong>{msg.role === 'user' ? 'あなた' : 'AI アシスタント'}</strong>
+                  <strong>
+                    {msg.role === 'user' ? 'あなた' : 
+                     msg.role === 'system' ? '検索結果' : 'AI アシスタント'}
+                  </strong>
                 </div>
                 <div style={styles.messageContent}>{msg.content}</div>
               </div>
@@ -263,6 +251,14 @@ const styles = {
     color: '#333',
     border: '1px solid #ddd',
     marginRight: 'auto',
+  },
+  systemMessage: {
+    backgroundColor: '#e8f4fd',
+    color: '#0066cc',
+    border: '1px solid #b3d9f2',
+    marginRight: 'auto',
+    fontFamily: 'monospace',
+    fontSize: '13px',
   },
   messageRole: {
     fontSize: '12px',

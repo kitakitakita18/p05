@@ -1519,24 +1519,18 @@ app.post('/api/meetings/generate-schedule', authenticateToken, authorizeRole(['a
 // OpenAI APIルート
 const openaiRoutes = require('./routes/openai');
 
-// Search APIルート
-const searchRoutes = require('./routes/search');
+// 検索ルート（TypeScriptからのインポート）
+try {
+  const searchRoutes = require('./dist/routes/search.js').default;
+  app.use('/api/search', authenticateToken, searchRoutes);
+  console.log('Search routes loaded successfully');
+} catch (error) {
+  console.warn('Search routes not loaded:', error.message);
+}
 
-// Supabaseテストルート
-//const supabaseTest = require('./routes/supabaseTest');
-
-// 認証が必要なAPIルートをマウント
+// 認証が必要なOpenAI APIルートをマウント
 app.use('/api/ai', authenticateToken, openaiRoutes);
 app.use('/api/openai', authenticateToken, openaiRoutes);
-app.use('/api/search', authenticateToken, searchRoutes);
-
-// TypeScriptで実装されたSupabase検索ルートを追加
-// 注意：これはTypeScriptファイルなので、実際の使用にはコンパイルが必要
-// app.use('/api/search', authenticateToken, require('./routes/search'));
-// app.use('/api/upload', authenticateToken, require('./routes/upload'));
-
-// Supabaseテストルートをマウント
-//app.use('/api/supabase-test', supabaseTest);
 
 // 本番環境でReactのビルド済みファイルをサーブ
 if (process.env.NODE_ENV === 'production') {
