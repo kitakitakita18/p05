@@ -329,18 +329,23 @@ export const sendChatMessage = async (messages: any[]): Promise<{content: string
   }
 };
 
-export const searchDocuments = async (question: string, matchThreshold: number = 0.7, matchCount: number = 3): Promise<{question: string, results: any[]}> => {
-  console.log('Searching documents for:', question);
-  console.log('Headers:', getAuthHeaders());
+export const searchDocuments = async (question: string, matchThreshold: number = 0.5, matchCount: number = 5): Promise<{question: string, results: any[]}> => {
+  console.log('🔍 Searching documents for:', question);
+  console.log('🔍 Search params:', { question, matchThreshold, matchCount });
+  console.log('🔍 Headers:', getAuthHeaders());
+  console.log('🔍 API URL:', `${API_BASE_URL}/search`);
   try {
     const response = await axios.post(`${API_BASE_URL}/search`, {
       question,
       matchThreshold,
       matchCount
     }, { headers: getAuthHeaders() });
+    console.log('🔍 Raw API response:', response);
+    console.log('🔍 Response data:', response.data);
     return response.data as any;
   } catch (error: any) {
-    console.error('searchDocuments error:', error.response?.data || error.message);
+    console.error('❌ searchDocuments error:', error.response?.data || error.message);
+    console.error('❌ Full error object:', error);
     throw error;
   }
 };

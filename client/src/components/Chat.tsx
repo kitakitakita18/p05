@@ -12,30 +12,61 @@ const Chat = () => {
 
     const userMessage = { role: "user", content: input };
     const userInput = input;
-    setMessages([...messages, userMessage]);
+    
+    // 状態更新の改善: 関数型更新を使用
+    setMessages(prev => [...prev, userMessage]);
     setInput("");
     setSearchLoading(true);
 
     // 🔍 ①検索結果を取得して先に表示
     try {
-      console.log('🔍 検索を実行中...');
+      console.log('🔍 検索を実行中...', { userInput, timestamp: new Date().toISOString() });
       const searchResponse = await searchDocuments(userInput);
-      console.log('🔍 検索結果:', searchResponse);
+      console.log('🔍 検索API完全レスポンス:', JSON.stringify(searchResponse, null, 2));
+      console.log('🔍 検索結果配列:', searchResponse?.results);
+      console.log('🔍 検索結果数:', searchResponse?.results?.length || 0);
       
       if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {
+        console.log('🔍 各検索結果の詳細:');
+        searchResponse.results.forEach((result: any, index: number) => {
+          console.log(`  結果${index + 1}:`, {
+            hasChunk: !!result.chunk,
+            hasContent: !!result.content,
+            similarity: result.similarity,
+            allKeys: Object.keys(result),
+            rawResult: result
+          });
+        });
+        
         // 検索結果をシステムメッセージとして一番上に追加
         const searchResultsMessage = {
           role: "system",
-          content: `🔍 **検索結果（関連文書）**\n\n${searchResponse.results.map((result: any, index: number) => 
-            `**${index + 1}.** ${result.chunk ? result.chunk.trim() : result.content ? result.content.trim() : '内容なし'}\n   (類似度: ${(result.similarity * 100).toFixed(1)}%)`
-          ).join('\n\n')}`
+          content: `🔍 **検索結果（関連文書）** - ${searchResponse.results.length}件\n\n${searchResponse.results.map((result: any, index: number) => {
+            // より多くのプロパティ名に対応
+            const text = result.chunk || result.content || result.text || result.document || result.passage || 
+                        (typeof result === 'string' ? result : JSON.stringify(result));
+            const similarity = result.similarity || result.score || result.match_score || result.relevance || 0;
+            
+            // テキストの長さ制限（500文字まで）
+            const displayText = typeof text === 'string' && text.length > 500 
+              ? text.substring(0, 500) + '...' 
+              : text;
+            
+            return `**${index + 1}.** ${displayText}\n   📊 類似度: ${(similarity * 100).toFixed(1)}%`;
+          }).join('\n\n---\n\n')}`
         };
         setMessages((prev) => [...prev, searchResultsMessage]);
+        console.log('✅ 検索結果メッセージを追加しました');
       } else {
+        console.log('⚠️ 検索結果が空またはnull:', { 
+          searchResponse, 
+          hasResults: !!searchResponse?.results,
+          resultsLength: searchResponse?.results?.length 
+        });
         // 検索結果なしの場合
         const noResultsMessage = {
           role: "system",
-          content: "🔍 検索結果（関連文書）は見つかりませんでした。"
+          content: `🔍 検索結果（関連文書）は見つかりませんでした。\n\nデバッグ情報: 質問「${userInput}」に対する検索を実行しましたが、関連する文書が見つかりませんでした。`
         };
         setMessages((prev) => [...prev, noResultsMessage]);
       }
@@ -53,22 +84,33 @@ const Chat = () => {
     // 🤖 ②AI応答を取得
     try {
       setLoading(true);
+      console.log('🤖 AI応答を取得中...');
       
-      const response = await sendChatMessage([...messages, userMessage]);
-      
-      // AIの応答を追加
-      const aiContent = typeof response === 'string' ? response : response.content;
-      setMessages((prev) => [...prev, { role: "assistant", content: aiContent }]);
+      // 現在のメッセージ履歴にユーザーメッセージを追加してAIに送信
+      setMessages(currentMessages => {
+        const messagesWithUser = [...currentMessages, userMessage];
+        // AI応答を非同期で取得
+        sendChatMessage(messagesWithUser).then(response => {
+          const aiContent = typeof response === 'string' ? response : response.content;
+          setMessages(prev => [...prev, { role: "assistant", content: aiContent }]);
+          console.log('✅ AI応答メッセージを追加しました');
+        }).catch(error => {
+          console.error('AI応答エラー:', error);
+          const errorMessage = error.response?.data?.error || error.message || "AI応答エラー";
+          const aiErrorMessage = {
+            role: "assistant",
+            content: `❌ AI応答の取得中にエラーが発生しました: ${errorMessage}`
+          };
+          setMessages(prev => [...prev, aiErrorMessage]);
+        }).finally(() => {
+          setLoading(false);
+        });
+        
+        return messagesWithUser;
+      });
       
     } catch (error: any) {
-      console.error('AI応答エラー:', error);
-      const errorMessage = error.response?.data?.error || error.message || "AI応答エラー";
-      const aiErrorMessage = {
-        role: "assistant",
-        content: `❌ AI応答の取得中にエラーが発生しました: ${errorMessage}`
-      };
-      setMessages((prev) => [...prev, aiErrorMessage]);
-    } finally {
+      console.error('🤖 AI応答取得でキャッチされたエラー:', error);
       setLoading(false);
     }
   };
