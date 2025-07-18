@@ -5,8 +5,6 @@ const Chat = () => {
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [showSearchResults, setShowSearchResults] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
 
   const handleSend = async () => {
@@ -18,31 +16,60 @@ const Chat = () => {
     setInput("");
     setSearchLoading(true);
 
+    // 🔍 ①検索結果を取得して先に表示
+    try {
+      console.log('🔍 検索を実行中...');
+      const searchResponse = await searchDocuments(userInput);
+      console.log('🔍 検索結果:', searchResponse);
+      
+      if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {
+        // 検索結果をシステムメッセージとして一番上に追加
+        const searchResultsMessage = {
+          role: "system",
+          content: `🔍 **検索結果（関連文書）**\n\n${searchResponse.results.map((result: any, index: number) => 
+            `**${index + 1}.** ${result.chunk ? result.chunk.trim() : result.content ? result.content.trim() : '内容なし'}\n   (類似度: ${(result.similarity * 100).toFixed(1)}%)`
+          ).join('\n\n')}`
+        };
+        setMessages((prev) => [...prev, searchResultsMessage]);
+      } else {
+        // 検索結果なしの場合
+        const noResultsMessage = {
+          role: "system",
+          content: "🔍 検索結果（関連文書）は見つかりませんでした。"
+        };
+        setMessages((prev) => [...prev, noResultsMessage]);
+      }
+    } catch (searchError: any) {
+      console.error('検索エラー:', searchError);
+      const searchErrorMessage = {
+        role: "system",
+        content: "❌ 検索中にエラーが発生しました。"
+      };
+      setMessages((prev) => [...prev, searchErrorMessage]);
+    } finally {
+      setSearchLoading(false);
+    }
+
+    // 🤖 ②AI応答を取得
     try {
       setLoading(true);
       
       const response = await sendChatMessage([...messages, userMessage]);
       
       // AIの応答を追加
-      setMessages((prev) => [...prev, { role: "assistant", content: response.content }]);
+      const aiContent = typeof response === 'string' ? response : response.content;
+      setMessages((prev) => [...prev, { role: "assistant", content: aiContent }]);
       
-      // 検索結果がある場合は別途表示
-      if (response.hasSearchResults && response.searchResults && response.searchResults.length > 0) {
-        const searchResultsMessage = {
-          role: "system",
-          content: `📄 関連文書が見つかりました:\n\n${response.searchResults.map((result: any, index: number) => 
-            `${index + 1}. ${result.content.substring(0, 150)}${result.content.length > 150 ? '...' : ''}\n   (類似度: ${(result.similarity * 100).toFixed(1)}%)`
-          ).join('\n\n')}`
-        };
-        setMessages((prev) => [...prev, searchResultsMessage]);
-      }
     } catch (error: any) {
-      console.error('Chat error:', error);
+      console.error('AI応答エラー:', error);
       const errorMessage = error.response?.data?.error || error.message || "AI応答エラー";
-      alert(`AI応答エラー: ${errorMessage}`);
+      const aiErrorMessage = {
+        role: "assistant",
+        content: `❌ AI応答の取得中にエラーが発生しました: ${errorMessage}`
+      };
+      setMessages((prev) => [...prev, aiErrorMessage]);
     } finally {
       setLoading(false);
-      setSearchLoading(false);
     }
   };
 
@@ -114,33 +141,6 @@ const Chat = () => {
           <div style={styles.searchLoadingContainer}>
             <div style={styles.searchLoadingMessage}>
               🔍 関連する規約・文書を検索中...
-            </div>
-          </div>
-        )}
-        
-        {/* 検索結果の表示 */}
-        {showSearchResults && searchResults.length > 0 && (
-          <div style={styles.searchResultsContainer}>
-            <div style={styles.searchResultsHeader}>
-              <strong>🔍 関連する規約・文書 ({searchResults.length}件)</strong>
-              <button 
-                onClick={() => setShowSearchResults(false)}
-                style={styles.closeButton}
-              >
-                ×
-              </button>
-            </div>
-            <div style={styles.searchResultsList}>
-              {searchResults.map((result: any, idx: number) => (
-                <div key={idx} style={styles.searchResult}>
-                  <div style={styles.searchResultSimilarity}>
-                    類似度: {(result.similarity * 100).toFixed(1)}%
-                  </div>
-                  <div style={styles.searchResultContent}>
-                    {result.chunk}
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         )}
@@ -253,12 +253,13 @@ const styles = {
     marginRight: 'auto',
   },
   systemMessage: {
-    backgroundColor: '#e8f4fd',
-    color: '#0066cc',
-    border: '1px solid #b3d9f2',
+    backgroundColor: '#f0f8ff',
+    color: '#1e40af',
+    border: '2px solid #3b82f6',
     marginRight: 'auto',
-    fontFamily: 'monospace',
-    fontSize: '13px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontSize: '14px',
+    boxShadow: '0 2px 4px rgba(59, 130, 246, 0.1)',
   },
   messageRole: {
     fontSize: '12px',
@@ -311,51 +312,6 @@ const styles = {
   sendButtonDisabled: {
     backgroundColor: '#6c757d',
     cursor: 'not-allowed',
-  },
-  searchResultsContainer: {
-    backgroundColor: '#f8f9fa',
-    border: '1px solid #dee2e6',
-    borderRadius: '8px',
-    margin: '10px 0',
-    padding: '15px',
-  },
-  searchResultsHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '10px',
-    fontSize: '14px',
-    color: '#495057',
-  },
-  closeButton: {
-    background: 'none',
-    border: 'none',
-    fontSize: '16px',
-    cursor: 'pointer',
-    color: '#6c757d',
-    padding: '0 4px',
-  },
-  searchResultsList: {
-    maxHeight: '200px',
-    overflowY: 'auto' as const,
-  },
-  searchResult: {
-    backgroundColor: 'white',
-    border: '1px solid #e9ecef',
-    borderRadius: '4px',
-    padding: '10px',
-    marginBottom: '8px',
-    fontSize: '13px',
-  },
-  searchResultSimilarity: {
-    color: '#6c757d',
-    fontSize: '11px',
-    marginBottom: '5px',
-    fontWeight: 'bold',
-  },
-  searchResultContent: {
-    lineHeight: '1.4',
-    color: '#333',
   },
   searchLoadingContainer: {
     backgroundColor: '#e3f2fd',
