@@ -1519,6 +1519,15 @@ app.post('/api/meetings/generate-schedule', authenticateToken, authorizeRole(['a
 // OpenAI APIルート
 const openaiRoutes = require('./routes/openai');
 
+// 検索ルート（TypeScriptからのインポート）
+try {
+  const searchRoutes = require('./dist/routes/search.js').default;
+  app.use('/api/search', authenticateToken, searchRoutes);
+  console.log('Search routes loaded successfully');
+} catch (error) {
+  console.warn('Search routes not loaded:', error.message);
+}
+
 // 認証が必要なOpenAI APIルートをマウント
 app.use('/api/ai', authenticateToken, openaiRoutes);
 app.use('/api/openai', authenticateToken, openaiRoutes);
