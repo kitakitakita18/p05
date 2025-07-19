@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { sendChatMessage, searchDocuments } from "../utils/api";
 
 const Chat = () => {
@@ -7,6 +7,29 @@ const Chat = () => {
   const [loading, setLoading] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [ragEnabled, setRagEnabled] = useState(true);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const latestAiMessageRef = useRef<HTMLDivElement>(null);
+  const latestUserMessageRef = useRef<HTMLDivElement>(null);
+
+  // 自動スクロール関数
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // AI応答の先頭にスクロール
+  const scrollToLatestAiMessage = () => {
+    latestAiMessageRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // ユーザーメッセージにスクロール（明細部の一番上部に配置）
+  const scrollToLatestUserMessage = () => {
+    latestUserMessageRef.current?.scrollIntoView({ 
+      behavior: "smooth", 
+      block: "start" 
+    });
+  };
+
+  // メッセージ更新時の自動スクロール制御は個別の場所で処理
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -18,6 +41,11 @@ const Chat = () => {
     // 状態更新の改善: 関数型更新を使用
     setMessages(prev => [...prev, userMessage]);
     setInput("");
+
+    // ユーザーメッセージにスクロール（少し遅延させてDOMが更新されるのを待つ）
+    setTimeout(() => {
+      scrollToLatestUserMessage();
+    }, 50);
 
     // 🤖 ①AI応答を先に取得して表示
     try {
@@ -31,6 +59,11 @@ const Chat = () => {
       // AI応答をメッセージ履歴に追加
       setMessages(prev => [...prev, { role: "assistant", content: aiContent }]);
       console.log('✅ AI応答メッセージを追加しました');
+      
+      // AI応答表示時はスクロールしない（仕様変更）
+      // setTimeout(() => {
+      //   scrollToLatestAiMessage();
+      // }, 100);
       
     } catch (error: any) {
       console.error('AI応答エラー:', error);
@@ -234,6 +267,7 @@ const Chat = () => {
           };
           setMessages((prev) => [...prev, searchResultsMessage]);
           console.log('✅ 検索完了メッセージを追加しました');
+          // 検索結果表示時はスクロールしない（仕様変更）
         } else {
           console.log('⚠️ 検索結果が空またはnull:', { 
             searchResponse, 
@@ -246,6 +280,7 @@ const Chat = () => {
             content: `🔍 関連する文書が見つかりませんでした。`
           };
           setMessages((prev) => [...prev, noResultsMessage]);
+          // 検索結果表示時はスクロールしない（仕様変更）
         }
       } catch (searchError: any) {
         console.error('検索エラー:', searchError);
@@ -254,6 +289,7 @@ const Chat = () => {
           content: "❌ 検索中にエラーが発生しました。"
         };
         setMessages((prev) => [...prev, searchErrorMessage]);
+        // 検索エラー時もスクロールしない（仕様変更）
       } finally {
         setSearchLoading(false);
       }
@@ -319,23 +355,40 @@ const Chat = () => {
             理事会に関する質問やお手伝いできることがあれば、お気軽にお聞かせください。
           </div>
         ) : (
-          messages.map((msg, idx) => (
-            <div key={idx} style={styles.messageWrapper}>
-              <div style={{
-                ...styles.message,
-                ...(msg.role === 'user' ? styles.userMessage : 
-                    msg.role === 'system' ? styles.systemMessage : styles.assistantMessage)
-              }}>
-                <div style={styles.messageRole}>
-                  <strong>
-                    {msg.role === 'user' ? 'あなた' : 
-                     msg.role === 'system' ? '検索結果' : 'AI アシスタント'}
-                  </strong>
+          messages.map((msg, idx) => {
+            // 最後のAI応答メッセージかどうかをチェック
+            const isLatestAiMessage = msg.role === 'assistant' && 
+              idx === messages.length - 1 || 
+              (idx === messages.length - 2 && messages[messages.length - 1]?.role === 'system');
+            
+            // 最後のユーザーメッセージかどうかをチェック
+            const isLatestUserMessage = msg.role === 'user' && 
+              (idx === messages.length - 1 || 
+               (idx < messages.length - 1 && messages[idx + 1]?.role === 'assistant'));
+            
+            return (
+              <div 
+                key={idx} 
+                style={styles.messageWrapper}
+                ref={isLatestAiMessage ? latestAiMessageRef : 
+                     isLatestUserMessage ? latestUserMessageRef : null}
+              >
+                <div style={{
+                  ...styles.message,
+                  ...(msg.role === 'user' ? styles.userMessage : 
+                      msg.role === 'system' ? styles.systemMessage : styles.assistantMessage)
+                }}>
+                  <div style={styles.messageRole}>
+                    <strong>
+                      {msg.role === 'user' ? 'あなた' : 
+                       msg.role === 'system' ? '検索結果' : 'AI アシスタント'}
+                    </strong>
+                  </div>
+                  <div style={styles.messageContent}>{msg.content}</div>
                 </div>
-                <div style={styles.messageContent}>{msg.content}</div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
         
         {loading && (
@@ -358,6 +411,9 @@ const Chat = () => {
             </div>
           </div>
         )}
+        
+        {/* 自動スクロール用の要素 */}
+        <div ref={messagesEndRef} />
       </div>
       
       <div style={styles.inputContainer}>

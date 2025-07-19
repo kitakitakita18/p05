@@ -8,38 +8,54 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// 文脈を考慮した検索クエリ生成関数
-const generateContextualSearchQuery = async (messages: any[], latestQuestion: string): Promise<string> => {
-  console.log('🔄 文脈結合開始 - 質問:', latestQuestion);
+// 最適化された検索クエリ生成関数
+const generateOptimalSearchQuery = (messages: any[], latestQuestion: string): string => {
+  console.log('🔄 最適化検索クエリ生成開始 - 質問:', latestQuestion);
   console.log('🔄 メッセージ履歴数:', messages.length);
   
-  // 最新質問に代名詞が含まれているかチェック
-  const pronouns = ['それ', 'これ', 'あれ', 'そこ', 'ここ', 'あそこ', 'その', 'この', 'あの'];
-  const hasPronoun = pronouns.some(pronoun => latestQuestion.includes(pronoun));
-  console.log('🔄 代名詞検出:', hasPronoun);
+  // 「まとめ」系の質問を検出
+  const isSummaryQuestion = latestQuestion.includes('まとめ') || 
+                           latestQuestion.includes('総括') ||
+                           latestQuestion.includes('要約');
+  console.log('🔄 まとめ系質問:', isSummaryQuestion);
   
-  // 代名詞がない、または会話履歴が短い場合はそのまま返す
-  if (!hasPronoun || messages.length < 2) {
-    console.log('🔄 文脈結合不要:', { hasPronoun, messageLength: messages.length });
+  // ユーザーメッセージのみ抽出
+  const userMessages = messages
+    .filter((msg: any) => msg.role === 'user')
+    .map((msg: any) => msg.content);
+  
+  if (userMessages.length === 0) {
+    console.log('🔄 ユーザーメッセージなし');
     return latestQuestion;
   }
   
-  // 直近のユーザーメッセージ（最大3件）を取得して文脈を構築
-  const userMessages = messages
-    .filter((msg: any) => msg.role === 'user')
-    .slice(-3) // 最新3件のユーザーメッセージ
-    .map((msg: any) => msg.content);
+  let searchQuery: string;
   
-  // 文脈を組み合わせた検索クエリを生成
-  if (userMessages.length > 1) {
-    const previousContext = userMessages.slice(0, -1).join(' ');
-    const contextualQuery = `${previousContext} ${latestQuestion}`;
-    console.log('🔍 文脈結合前:', latestQuestion);
-    console.log('🔍 文脈結合後:', contextualQuery);
-    return contextualQuery;
+  if (isSummaryQuestion) {
+    // まとめ系質問：最新5件で包括的に検索
+    const contextMessages = userMessages.slice(-5);
+    searchQuery = contextMessages.join(' ');
+    console.log('🔍 まとめ系 - 参照件数:', contextMessages.length);
+    console.log('🔍 まとめ系 - 検索クエリ:', searchQuery.substring(0, 100) + '...');
+  } else {
+    // 通常質問：代名詞チェックして文脈確保
+    const pronouns = ['それ', 'これ', 'あれ', 'そこ', 'ここ', 'あそこ', 'その', 'この', 'あの'];
+    const hasPronoun = pronouns.some(pronoun => latestQuestion.includes(pronoun));
+    
+    if (hasPronoun && userMessages.length > 1) {
+      // 代名詞あり：最新2件で文脈確保
+      const contextMessages = userMessages.slice(-2);
+      searchQuery = contextMessages.join(' ');
+      console.log('🔍 通常（代名詞あり） - 参照件数:', contextMessages.length);
+    } else {
+      // 代名詞なし：最新質問のみ
+      searchQuery = latestQuestion;
+      console.log('🔍 通常（代名詞なし） - 質問のみ使用');
+    }
   }
   
-  return latestQuestion;
+  console.log('🔍 最終検索クエリ:', searchQuery.substring(0, 150) + (searchQuery.length > 150 ? '...' : ''));
+  return searchQuery;
 };
 
 // チャット完了エンドポイント（RAG検索統合）
@@ -59,8 +75,8 @@ router.post("/chat", async (req, res) => {
     const latestUserMessage = messages[messages.length - 1];
     const userQuestion = latestUserMessage.content;
     
-    // 文脈を考慮した検索クエリを生成
-    const searchQuery = await generateContextualSearchQuery(messages, userQuestion);
+    // 最適化された検索クエリを生成
+    const searchQuery = generateOptimalSearchQuery(messages, userQuestion);
     console.log('🚀 ユーザー質問:', userQuestion);
     console.log('🚀 検索クエリ（文脈結合後）:', searchQuery);
     console.log('🚀 RAG有効:', ragEnabled);
