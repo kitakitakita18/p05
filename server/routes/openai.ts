@@ -8,6 +8,40 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// 文脈を考慮した検索クエリ生成関数
+const generateContextualSearchQuery = async (messages: any[], latestQuestion: string): Promise<string> => {
+  console.log('🔄 文脈結合開始 - 質問:', latestQuestion);
+  console.log('🔄 メッセージ履歴数:', messages.length);
+  
+  // 最新質問に代名詞が含まれているかチェック
+  const pronouns = ['それ', 'これ', 'あれ', 'そこ', 'ここ', 'あそこ', 'その', 'この', 'あの'];
+  const hasPronoun = pronouns.some(pronoun => latestQuestion.includes(pronoun));
+  console.log('🔄 代名詞検出:', hasPronoun);
+  
+  // 代名詞がない、または会話履歴が短い場合はそのまま返す
+  if (!hasPronoun || messages.length < 2) {
+    console.log('🔄 文脈結合不要:', { hasPronoun, messageLength: messages.length });
+    return latestQuestion;
+  }
+  
+  // 直近のユーザーメッセージ（最大3件）を取得して文脈を構築
+  const userMessages = messages
+    .filter((msg: any) => msg.role === 'user')
+    .slice(-3) // 最新3件のユーザーメッセージ
+    .map((msg: any) => msg.content);
+  
+  // 文脈を組み合わせた検索クエリを生成
+  if (userMessages.length > 1) {
+    const previousContext = userMessages.slice(0, -1).join(' ');
+    const contextualQuery = `${previousContext} ${latestQuestion}`;
+    console.log('🔍 文脈結合前:', latestQuestion);
+    console.log('🔍 文脈結合後:', contextualQuery);
+    return contextualQuery;
+  }
+  
+  return latestQuestion;
+};
+
 // チャット完了エンドポイント（RAG検索統合）
 router.post("/chat", async (req, res) => {
   console.log('🚀 /openai/chat エンドポイントにリクエスト受信');
@@ -24,7 +58,11 @@ router.post("/chat", async (req, res) => {
     // 最新のユーザーメッセージを取得
     const latestUserMessage = messages[messages.length - 1];
     const userQuestion = latestUserMessage.content;
+    
+    // 文脈を考慮した検索クエリを生成
+    const searchQuery = await generateContextualSearchQuery(messages, userQuestion);
     console.log('🚀 ユーザー質問:', userQuestion);
+    console.log('🚀 検索クエリ（文脈結合後）:', searchQuery);
     console.log('🚀 RAG有効:', ragEnabled);
 
     // RAG検索を実行（RAG有効かつSupabaseが設定されている場合のみ）
@@ -33,11 +71,13 @@ router.post("/chat", async (req, res) => {
       try {
         console.log('🤖 バックエンドRAG検索を実行中:', userQuestion);
         
-        // 質問のembeddingを生成
+        // 文脈を考慮した検索クエリのembeddingを生成
         const embeddingResponse = await openai.embeddings.create({
           model: 'text-embedding-ada-002',
-          input: userQuestion,
+          input: searchQuery,
         });
+        
+        console.log('🤖 バックエンド検索クエリ:', searchQuery);
         
         const queryEmbedding = embeddingResponse.data[0].embedding;
         console.log('🤖 バックエンドembedding生成完了:', queryEmbedding.length, 'dimensions');

@@ -332,7 +332,7 @@ export const sendChatMessage = async (messages: any[], ragEnabled: boolean = tru
   }
 };
 
-export const searchDocuments = async (question: string, matchThreshold: number = 0.2, matchCount: number = 10): Promise<{question: string, results: any[]}> => {
+export const searchDocuments = async (question: string, matchThreshold: number = 0.3, matchCount: number = 3): Promise<{question: string, results: any[]}> => {
   console.log('🔍 Searching documents for:', question);
   console.log('🔍 Search params:', { question, matchThreshold, matchCount });
   console.log('🔍 Headers:', getAuthHeaders());

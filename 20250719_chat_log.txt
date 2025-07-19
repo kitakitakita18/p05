@@ -1,0 +1,173 @@
+# 本日のやりとりログ - 2025年7月19日
+
+## 1. 初期問題の発見
+**質問**: 職員の回答は正しいが、検索結果画面で「修繕等の履歴情報」という異なる内容が表示される理由を調査
+
+**分析結果**:
+- AIアシスタント: OpenAI APIで職員に関する正確な回答を生成
+- 検索結果表示: Supabaseベクトル検索で関連性の低い「修繕等の履歴情報」を表示
+- 原因: 検索閾値の違い（AIアシスタント: 0.3、検索結果: 0.2）
+
+## 2. 検索パラメータの最適化
+
+### 閾値統一
+```typescript
+// 修正前
+const { question, matchThreshold = 0.2, matchCount = 10 } = req.body;
+
+// 修正後  
+const { question, matchThreshold = 0.3, matchCount = 3 } = req.body;
+```
+
+### フロントエンドAPI統一
+```typescript
+// 修正前
+export const searchDocuments = async (question: string, matchThreshold: number = 0.2, matchCount: number = 10)
+
+// 修正後
+export const searchDocuments = async (question: string, matchThreshold: number = 0.3, matchCount: number = 3)
+```
+
+## 3. 連続質問時の検索精度問題
+
+**問題**: 「それは何ですか？」のような代名詞を含む質問で検索精度が低下
+
+**解決策実装**:
+
+### フロントエンド修正
+```typescript
+// 修正前: 最新メッセージのみ送信
+const response = await sendChatMessage([userMessage], ragEnabled);
+
+// 修正後: 会話履歴全体を送信
+const response = await sendChatMessage([...messages, userMessage], ragEnabled);
+```
+
+### バックエンド文脈結合機能
+```typescript
+const generateContextualSearchQuery = async (messages: any[], latestQuestion: string): Promise<string> => {
+  const pronouns = ['それ', 'これ', 'あれ', 'そこ', 'ここ', 'あそこ', 'その', 'この', 'あの'];
+  const hasPronoun = pronouns.some(pronoun => latestQuestion.includes(pronoun));
+  
+  if (!hasPronoun || messages.length < 2) {
+    return latestQuestion;
+  }
+  
+  const userMessages = messages
+    .filter((msg: any) => msg.role === 'user')
+    .slice(-3)
+    .map((msg: any) => msg.content);
+  
+  if (userMessages.length > 1) {
+    const previousContext = userMessages.slice(0, -1).join(' ');
+    return `${previousContext} ${latestQuestion}`;
+  }
+  
+  return latestQuestion;
+};
+```
+
+## 4. Invalid tokenエラーの解決
+
+**原因**: JWT認証トークンの有効期限切れ
+**解決策**: ログイン画面での再認証
+
+## 5. 検索結果フィルタリングの重大バグ
+
+**問題**: フィルタリングロジックが厳しすぎて全結果を除外
+```
+🔍 関連文書の検索結果（3件検索しましたが、関連性の高い結果が見つかりませんでした）
+```
+
+**原因分析**:
+```typescript
+// 問題のあるロジック
+if (userInput.includes('とは') && !isDefinition && !hasArticle) {
+  keywordScore -= 2.0; // 負の値になり全て除外
+}
+
+const combinedScore = result.similarity * 0.3 + keywordScore * 0.7;
+.filter((result: any) => result.combinedScore > 0) // 全て除外
+```
+
+**緊急修正**:
+```typescript
+// 修正後
+if (userInput.includes('とは') && !isDefinition && !hasArticle && keywordScore > 0) {
+  keywordScore = Math.max(0.1, keywordScore - 1.0); // 最低0.1保証
+}
+```
+
+## 6. 議決権検索の根本問題分析
+
+**持続する問題**: 「議決権とは」で「議事録作成」が上位表示
+
+**ログ分析結果**:
+```
+バックエンドRAG検索結果：
+- 結果3位: similarity: 0.400781417110621 (40.1%)
+- 内容: "総会の議事については、議長は、議事録を作成しなければならない"
+```
+
+**根本原因特定**:
+1. **ベクトル類似度の限界**: OpenAIエンベディングが「議決権」と「議事録」を総会文脈で40.1%類似と判定
+2. **語彙的類似性**: 「議決」「議事」の音韻・文字類似性
+3. **文脈的近接性**: 両方ともマンション規約の総会関連セクション
+4. **意味的関連性の欠如**: 権利の定義 vs 記録手続きという本質的な違いを区別できない
+
+## 7. 技術的知見
+
+### match_thresholdの最適範囲
+- **0.25-0.4**: マンション規約検索での推奨範囲
+- **0.3**: 現在の設定で適切なバランス
+- **0.4以上**: 厳格すぎて重要な関連条文を見逃すリスク
+
+### match_countの最適化
+```
+10件 → 5件 → 3件
+処理速度向上とコスト削減、精度は維持
+```
+
+### 文字数制限の調整
+```typescript
+// 検索結果表示の文字数制限拡張
+preview = chunk.length > 350 ? chunk.substring(0, 350) + '...' : chunk;
+```
+
+## 8. 残存する課題
+
+### ベクトル検索の根本的限界
+- **文脈的近接性** > **意味的関連性**の優先順位問題
+- 「議決権」（権利定義）と「議事録」（手続き記録）の区別困難
+- 現在のベクトル検索技術では解決困難
+
+### 今後の改善方向性
+1. より高精度な意味理解モデルの導入
+2. 専門用語辞書を活用した意味的フィルタリング
+3. 規約文書の構造的特徴を活用した検索ロジック
+
+## 実装された主要な改善点
+
+1. ✅ 検索閾値とカウントの最適化 (0.2→0.3, 10→3)
+2. ✅ 連続質問時の文脈結合機能
+3. ✅ フィルタリングロジックの安全性確保
+4. ✅ 検索結果表示の文字数拡張
+5. ❌ ベクトル検索の意味的精度向上（技術的限界により未解決）
+
+## 修正されたファイル一覧
+
+### バックエンド
+- /home/kita/p05/server/routes/search.ts (閾値・カウント最適化)
+- /home/kita/p05/server/routes/openai.ts (文脈結合機能追加)
+
+### フロントエンド  
+- /home/kita/p05/client/src/components/Chat.tsx (履歴送信・フィルタリング修正)
+- /home/kita/p05/client/src/utils/api.ts (デフォルト値統一)
+
+## 技術的教訓
+
+1. **ベクトル検索の限界**: 語彙的類似性と意味的関連性の区別困難
+2. **フィルタリングの危険性**: 過度な条件で全結果を除外するリスク  
+3. **パラメータ統一の重要性**: 異なる閾値による結果の不整合
+4. **文脈保持の必要性**: 連続質問での代名詞解決
+5. **ログ分析の価値**: 根本原因特定における詳細ログの重要性

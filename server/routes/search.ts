@@ -9,7 +9,7 @@ const openai = new OpenAI({
 
 router.post('/', async (req, res) => {
   try {
-    const { question, matchThreshold = 0.2, matchCount = 10 } = req.body;
+    const { question, matchThreshold = 0.3, matchCount = 3 } = req.body;
     
     console.log('🔍 Search request received:', { question, matchThreshold, matchCount });
 

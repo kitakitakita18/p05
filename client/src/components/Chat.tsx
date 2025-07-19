@@ -24,8 +24,8 @@ const Chat = () => {
       setLoading(true);
       console.log('🤖 AI応答を取得中...', { ragEnabled });
       
-      // RAG有効/無効の設定をバックエンドに送信
-      const response = await sendChatMessage([userMessage], ragEnabled);
+      // RAG有効/無効の設定をバックエンドに送信（会話履歴全体を送信）
+      const response = await sendChatMessage([...messages, userMessage], ragEnabled);
       const aiContent = typeof response === 'string' ? response : response.content;
       
       // AI応答をメッセージ履歴に追加
@@ -121,9 +121,14 @@ const Chat = () => {
               keywordScore -= 3.0;
             }
             
-            // 関連性の低い結果を除外
+            // 関連性の低い結果を除外（より厳格な基準）
             if (keywordScore <= 0 && result.similarity < 0.4) {
               keywordScore = -1.0;
+            }
+            
+            // 「とは」質問の場合、定義文でない結果のスコアを下げる（ただし過度に下げない）
+            if (userInput.includes('とは') && !isDefinition && !hasArticle && keywordScore > 0) {
+              keywordScore = Math.max(0.1, keywordScore - 1.0);
             }
             
             // 類似度とキーワードスコアを組み合わせて総合スコアを算出
@@ -212,7 +217,7 @@ const Chat = () => {
                   preview = `🎯 ${preview}`;
                 } else {
                   // キーワードが見つからない場合は従来通り先頭から表示
-                  preview = chunk.length > 200 ? chunk.substring(0, 200) + '...' : chunk;
+                  preview = chunk.length > 350 ? chunk.substring(0, 350) + '...' : chunk;
                 }
                 
                 // キーワードスコアの表示
