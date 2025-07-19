@@ -278,9 +278,10 @@ export const api = {
   },
 
   // バックエンド経由OpenAI API (ユーザー指定の実装)
-  sendChatMessage: async (messages: any[]): Promise<{content: string, searchResults?: any[], hasSearchResults?: boolean}> => {
+  sendChatMessage: async (messages: any[], ragEnabled: boolean = true): Promise<{content: string, searchResults?: any[], hasSearchResults?: boolean}> => {
     const response = await axios.post(`${API_BASE_URL}/openai/chat`, { 
-      messages 
+      messages,
+      ragEnabled
     }, { headers: getAuthHeaders() });
     return response.data as any;
   },
@@ -315,12 +316,14 @@ export const api = {
 };
 
 // ユーザー指定の実装に合わせた個別エクスポート
-export const sendChatMessage = async (messages: any[]): Promise<{content: string, searchResults?: any[], hasSearchResults?: boolean}> => {
+export const sendChatMessage = async (messages: any[], ragEnabled: boolean = true): Promise<{content: string, searchResults?: any[], hasSearchResults?: boolean}> => {
   console.log('Sending chat message to:', `${API_BASE_URL}/openai/chat`);
   console.log('Headers:', getAuthHeaders());
+  console.log('RAG Enabled:', ragEnabled);
   try {
     const response = await axios.post(`${API_BASE_URL}/openai/chat`, { 
-      messages 
+      messages,
+      ragEnabled
     }, { headers: getAuthHeaders() });
     return response.data as any;
   } catch (error: any) {

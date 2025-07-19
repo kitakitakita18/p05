@@ -6,6 +6,7 @@ const Chat = () => {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [ragEnabled, setRagEnabled] = useState(true);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -17,15 +18,41 @@ const Chat = () => {
     // 状態更新の改善: 関数型更新を使用
     setMessages(prev => [...prev, userMessage]);
     setInput("");
-    setSearchLoading(true);
 
-    // 🔍 ①検索結果を取得して先に表示
+    // 🤖 ①AI応答を先に取得して表示
     try {
-      console.log('🔍 フロントエンド検索を実行中...', { userInput, timestamp: new Date().toISOString() });
-      searchResponse = await searchDocuments(userInput);
-      console.log('🔍 フロントエンド検索API完全レスポンス:', JSON.stringify(searchResponse, null, 2));
-      console.log('🔍 フロントエンド検索結果配列:', searchResponse?.results);
-      console.log('🔍 フロントエンド検索結果数:', searchResponse?.results?.length || 0);
+      setLoading(true);
+      console.log('🤖 AI応答を取得中...', { ragEnabled });
+      
+      // RAG有効/無効の設定をバックエンドに送信
+      const response = await sendChatMessage([userMessage], ragEnabled);
+      const aiContent = typeof response === 'string' ? response : response.content;
+      
+      // AI応答をメッセージ履歴に追加
+      setMessages(prev => [...prev, { role: "assistant", content: aiContent }]);
+      console.log('✅ AI応答メッセージを追加しました');
+      
+    } catch (error: any) {
+      console.error('AI応答エラー:', error);
+      const errorMessage = error.response?.data?.error || error.message || "AI応答エラー";
+      const aiErrorMessage = {
+        role: "assistant",
+        content: `❌ AI応答の取得中にエラーが発生しました: ${errorMessage}`
+      };
+      setMessages(prev => [...prev, aiErrorMessage]);
+    } finally {
+      setLoading(false);
+    }
+
+    // 🔍 ②検索結果を後で表示（RAG有効時のみ）
+    if (ragEnabled) {
+      try {
+        setSearchLoading(true);
+        console.log('🔍 フロントエンド検索を実行中...', { userInput, timestamp: new Date().toISOString() });
+        searchResponse = await searchDocuments(userInput);
+        console.log('🔍 フロントエンド検索API完全レスポンス:', JSON.stringify(searchResponse, null, 2));
+        console.log('🔍 フロントエンド検索結果配列:', searchResponse?.results);
+        console.log('🔍 フロントエンド検索結果数:', searchResponse?.results?.length || 0);
       
       if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {
         console.log('🔍 各検索結果の詳細:');
@@ -118,150 +145,113 @@ const Chat = () => {
           // 上位3件に絞る
           .slice(0, 3);
 
-        const searchResultsMessage = {
-          role: "system",
-          content: filteredResults.length > 0 ? 
-            `🔍 関連文書を検索しました（${searchResponse.results.length}件中、関連性の高い${filteredResults.length}件を表示）\n\n` +
-            filteredResults.map((result: any, index: number) => {
-              const similarity = (result.similarity * 100).toFixed(1);
-              const keywordScore = result.keywordScore || 0;
-              const chunk = result.chunk || result.content || 'コンテンツなし';
-              
-              // 質問のキーワードを抽出（「とは」「について」などを除外）
-              const questionLower = userInput.toLowerCase().replace(/[とは？について教えてください何ですか]/g, '').trim();
-              const keywords = questionLower.split(/\s+/).filter(k => k.length > 0);
-              
-              // キーワードにマッチする文や項目を抽出
-              const extractRelevantParts = (text: string, keywords: string[]): string[] => {
-                const parts = [];
-                const textLower = text.toLowerCase();
+          const searchResultsMessage = {
+            role: "system",
+            content: filteredResults.length > 0 ? 
+              `🔍 関連文書の検索結果（${searchResponse.results.length}件中、関連性の高い${filteredResults.length}件を表示）\n\n` +
+              filteredResults.map((result: any, index: number) => {
+                const similarity = (result.similarity * 100).toFixed(1);
+                const keywordScore = result.keywordScore || 0;
+                const chunk = result.chunk || result.content || 'コンテンツなし';
                 
-                // 各キーワードについて関連部分を抽出
-                for (const keyword of keywords) {
-                  if (textLower.includes(keyword)) {
-                    // 番号付きリスト（一 、二 、三 など）の項目を抽出
-                    const numberedItemRegex = new RegExp(`[一二三四五六七八九十]{1,2}\\s+${keyword}[^。]*。?`, 'gi');
-                    const numberedMatches = text.match(numberedItemRegex);
-                    if (numberedMatches) {
-                      parts.push(...numberedMatches);
-                    }
-                    
-                    // 番号付きリスト（1. 2. 3. など）の項目を抽出
-                    const numberedItemRegex2 = new RegExp(`\\d+\\.?\\s+[^。]*${keyword}[^。]*。?`, 'gi');
-                    const numberedMatches2 = text.match(numberedItemRegex2);
-                    if (numberedMatches2) {
-                      parts.push(...numberedMatches2);
-                    }
-                    
-                    // 第X条形式の抽出
-                    const articleRegex = new RegExp(`第\\d+条[^。]*${keyword}[^。]*。?`, 'gi');
-                    const articleMatches = text.match(articleRegex);
-                    if (articleMatches) {
-                      parts.push(...articleMatches);
-                    }
-                    
-                    // 通常の文章からキーワードを含む文を抽出
-                    const sentences = text.split(/[。！？]/).filter(s => s.trim().length > 0);
-                    const keywordSentences = sentences.filter(s => 
-                      s.toLowerCase().includes(keyword) && s.trim().length > 0
-                    );
-                    if (keywordSentences.length > 0) {
-                      parts.push(...keywordSentences.map(s => s.trim() + (s.endsWith('。') ? '' : '。')));
+                // 質問のキーワードを抽出（「とは」「について」などを除外）
+                const questionLower = userInput.toLowerCase().replace(/[とは？について教えてください何ですか]/g, '').trim();
+                const keywords = questionLower.split(/\s+/).filter(k => k.length > 0);
+                
+                // キーワードにマッチする文や項目を抽出
+                const extractRelevantParts = (text: string, keywords: string[]): string[] => {
+                  const parts = [];
+                  const textLower = text.toLowerCase();
+                  
+                  // 各キーワードについて関連部分を抽出
+                  for (const keyword of keywords) {
+                    if (textLower.includes(keyword)) {
+                      // 番号付きリスト（一 、二 、三 など）の項目を抽出
+                      const numberedItemRegex = new RegExp(`[一二三四五六七八九十]{1,2}\\s+${keyword}[^。]*。?`, 'gi');
+                      const numberedMatches = text.match(numberedItemRegex);
+                      if (numberedMatches) {
+                        parts.push(...numberedMatches);
+                      }
+                      
+                      // 番号付きリスト（1. 2. 3. など）の項目を抽出
+                      const numberedItemRegex2 = new RegExp(`\\d+\\.?\\s+[^。]*${keyword}[^。]*。?`, 'gi');
+                      const numberedMatches2 = text.match(numberedItemRegex2);
+                      if (numberedMatches2) {
+                        parts.push(...numberedMatches2);
+                      }
+                      
+                      // 第X条形式の抽出
+                      const articleRegex = new RegExp(`第\\d+条[^。]*${keyword}[^。]*。?`, 'gi');
+                      const articleMatches = text.match(articleRegex);
+                      if (articleMatches) {
+                        parts.push(...articleMatches);
+                      }
+                      
+                      // 通常の文章からキーワードを含む文を抽出
+                      const sentences = text.split(/[。！？]/).filter(s => s.trim().length > 0);
+                      const keywordSentences = sentences.filter(s => 
+                        s.toLowerCase().includes(keyword) && s.trim().length > 0
+                      );
+                      if (keywordSentences.length > 0) {
+                        parts.push(...keywordSentences.map(s => s.trim() + (s.endsWith('。') ? '' : '。')));
+                      }
                     }
                   }
+                  
+                  // 重複を除去して返す
+                  return Array.from(new Set(parts)).filter(p => p.trim().length > 0);
+                };
+                
+                const relevantParts = extractRelevantParts(chunk, keywords);
+                
+                let preview = '';
+                if (relevantParts.length > 0) {
+                  // 最も関連性の高い部分を表示（最初の2つまで）
+                  preview = relevantParts.slice(0, 2).join('\n');
+                  // 抽出した部分を強調表示
+                  preview = `🎯 ${preview}`;
+                } else {
+                  // キーワードが見つからない場合は従来通り先頭から表示
+                  preview = chunk.length > 200 ? chunk.substring(0, 200) + '...' : chunk;
                 }
                 
-                // 重複を除去して返す
-                return Array.from(new Set(parts)).filter(p => p.trim().length > 0);
-              };
-              
-              const relevantParts = extractRelevantParts(chunk, keywords);
-              
-              let preview = '';
-              if (relevantParts.length > 0) {
-                // 最も関連性の高い部分を表示（最初の2つまで）
-                preview = relevantParts.slice(0, 2).join('\n');
-                // 抽出した部分を強調表示
-                preview = `🎯 ${preview}`;
-              } else {
-                // キーワードが見つからない場合は従来通り先頭から表示
-                preview = chunk.length > 200 ? chunk.substring(0, 200) + '...' : chunk;
-              }
-              
-              // キーワードスコアの表示
-              const scoreInfo = keywordScore > 0 ? ` [キーワード適合度: ${keywordScore.toFixed(1)}]` : '';
-              const definitionInfo = result.isDefinition ? ' [定義文]' : '';
-              const articleInfo = result.hasArticle ? ' [条文]' : '';
-              const housingInfo = result.isHousingList ? ' [住戸リスト]' : '';
-              return `📄 結果${index + 1}: (類似度: ${similarity}%${scoreInfo}${definitionInfo}${articleInfo}${housingInfo})\n${preview}`;
-            }).join('\n\n')
-            : 
-            `🔍 関連文書を検索しました（${searchResponse.results.length}件検索しましたが、関連性の高い結果が見つかりませんでした）\n\n` +
-            `💡 **データベースに該当する情報が存在しない可能性があります。**\n` +
-            `お探しの「専有部分の範囲」に関する具体的な規定（第7条など）がデータベースに登録されていない可能性があります。\n\n` +
-            `**現在利用可能な情報:**\n` +
-            `• 専有部分の法的定義（第2条）\n` +
-            `• 共用部分の使用に関する規定\n` +
-            `• その他の管理規約項目\n\n` +
-            `**解決策:**\n` +
-            `1. 管理組合の規約原本を確認してください\n` +
-            `2. 不足している規約内容をデータベースに追加することをお勧めします`
-        };
-        setMessages((prev) => [...prev, searchResultsMessage]);
-        console.log('✅ 検索完了メッセージを追加しました');
-      } else {
-        console.log('⚠️ 検索結果が空またはnull:', { 
-          searchResponse, 
-          hasResults: !!searchResponse?.results,
-          resultsLength: searchResponse?.results?.length 
-        });
-        // 検索結果なしの場合
-        const noResultsMessage = {
+                // キーワードスコアの表示
+                const scoreInfo = keywordScore > 0 ? ` [キーワード適合度: ${keywordScore.toFixed(1)}]` : '';
+                const definitionInfo = result.isDefinition ? ' [定義文]' : '';
+                const articleInfo = result.hasArticle ? ' [条文]' : '';
+                const housingInfo = result.isHousingList ? ' [住戸リスト]' : '';
+                return `📄 結果${index + 1}: (類似度: ${similarity}%${scoreInfo}${definitionInfo}${articleInfo}${housingInfo})\n${preview}`;
+              }).join('\n\n')
+              : 
+              `🔍 関連文書の検索結果（${searchResponse.results.length}件検索しましたが、関連性の高い結果が見つかりませんでした）\n\n` +
+              `💡 **データベースに該当する情報が存在しない可能性があります。**\n` +
+              `**解決策:** 管理組合の規約原本を確認するか、不足している規約内容をデータベースに追加してください。`
+          };
+          setMessages((prev) => [...prev, searchResultsMessage]);
+          console.log('✅ 検索完了メッセージを追加しました');
+        } else {
+          console.log('⚠️ 検索結果が空またはnull:', { 
+            searchResponse, 
+            hasResults: !!searchResponse?.results,
+            resultsLength: searchResponse?.results?.length 
+          });
+          // 検索結果なしの場合
+          const noResultsMessage = {
+            role: "system",
+            content: `🔍 関連する文書が見つかりませんでした。`
+          };
+          setMessages((prev) => [...prev, noResultsMessage]);
+        }
+      } catch (searchError: any) {
+        console.error('検索エラー:', searchError);
+        const searchErrorMessage = {
           role: "system",
-          content: `🔍 関連する文書が見つかりませんでした。一般的な知識でお答えします。`
+          content: "❌ 検索中にエラーが発生しました。"
         };
-        setMessages((prev) => [...prev, noResultsMessage]);
+        setMessages((prev) => [...prev, searchErrorMessage]);
+      } finally {
+        setSearchLoading(false);
       }
-    } catch (searchError: any) {
-      console.error('検索エラー:', searchError);
-      const searchErrorMessage = {
-        role: "system",
-        content: "❌ 検索中にエラーが発生しました。"
-      };
-      setMessages((prev) => [...prev, searchErrorMessage]);
-    } finally {
-      setSearchLoading(false);
-    }
-
-    // 🤖 ②AI応答を取得
-    try {
-      setLoading(true);
-      console.log('🤖 AI応答を取得中...');
-      
-      // メッセージ履歴を準備（バックエンドRAGのため、履歴は単純化）
-      
-      // AI回答はバックエンドのRAG検索に任せる（フロントエンドでは検索結果表示のみ）
-      // 検索結果に基づく特別なシステムメッセージは追加しない
-      
-      // AI応答を取得（バックエンドで自動的にRAG検索が実行される）
-      // 単純にユーザーメッセージのみを送信し、バックエンドRAGに任せる
-      const response = await sendChatMessage([userMessage]);
-      const aiContent = typeof response === 'string' ? response : response.content;
-      
-      // AI応答をメッセージ履歴に追加
-      setMessages(prev => [...prev, { role: "assistant", content: aiContent }]);
-      console.log('✅ AI応答メッセージを追加しました');
-      
-    } catch (error: any) {
-      console.error('AI応答エラー:', error);
-      const errorMessage = error.response?.data?.error || error.message || "AI応答エラー";
-      const aiErrorMessage = {
-        role: "assistant",
-        content: `❌ AI応答の取得中にエラーが発生しました: ${errorMessage}`
-      };
-      setMessages(prev => [...prev, aiErrorMessage]);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -288,19 +278,34 @@ const Chat = () => {
     <div style={styles.container}>
       <div style={styles.header}>
         <h2 style={styles.title}>GPT‑4.1 nano チャット</h2>
-        <button 
-          onClick={clearMessages} 
-          style={styles.clearButton}
-          disabled={loading}
-        >
-          チャットクリア
-        </button>
-        <button 
-          onClick={checkAuth} 
-          style={{...styles.clearButton, marginLeft: '10px'}}
-        >
-          認証確認
-        </button>
+        <div style={styles.headerControls}>
+          <div style={styles.ragToggle}>
+            <label style={styles.ragToggleLabel}>
+              <input
+                type="checkbox"
+                checked={ragEnabled}
+                onChange={(e) => setRagEnabled(e.target.checked)}
+                style={styles.ragToggleCheckbox}
+              />
+              <span style={styles.ragToggleText}>
+                {ragEnabled ? '🔍 RAG有効' : '🚫 RAG無効'}
+              </span>
+            </label>
+          </div>
+          <button 
+            onClick={clearMessages} 
+            style={styles.clearButton}
+            disabled={loading}
+          >
+            チャットクリア
+          </button>
+          <button 
+            onClick={checkAuth} 
+            style={{...styles.clearButton, marginLeft: '10px'}}
+          >
+            認証確認
+          </button>
+        </div>
       </div>
       
       <div style={styles.messagesContainer}>
@@ -328,15 +333,6 @@ const Chat = () => {
           ))
         )}
         
-        {/* 検索中の表示 */}
-        {searchLoading && (
-          <div style={styles.searchLoadingContainer}>
-            <div style={styles.searchLoadingMessage}>
-              🔍 関連する規約・文書を検索中...
-            </div>
-          </div>
-        )}
-        
         {loading && (
           <div style={styles.messageWrapper}>
             <div style={{...styles.message, ...styles.assistantMessage}}>
@@ -345,6 +341,15 @@ const Chat = () => {
                 <span style={styles.loadingDots}>考え中</span>
                 <span style={styles.loadingAnimation}>...</span>
               </div>
+            </div>
+          </div>
+        )}
+        
+        {/* 検索中の表示（RAG有効時のみ） */}
+        {ragEnabled && searchLoading && (
+          <div style={styles.searchLoadingContainer}>
+            <div style={styles.searchLoadingMessage}>
+              🔍 関連する規約・文書を検索中...
             </div>
           </div>
         )}
@@ -394,6 +399,33 @@ const styles = {
     borderBottom: '1px solid #eee',
     backgroundColor: '#f8f9fa',
     borderRadius: '8px 8px 0 0',
+  },
+  headerControls: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  ragToggle: {
+    display: 'flex',
+    alignItems: 'center',
+  },
+  ragToggleLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    cursor: 'pointer',
+    padding: '6px 12px',
+    borderRadius: '4px',
+    backgroundColor: '#e9ecef',
+    border: '1px solid #ced4da',
+    transition: 'all 0.3s ease',
+  },
+  ragToggleCheckbox: {
+    marginRight: '6px',
+  },
+  ragToggleText: {
+    fontSize: '12px',
+    fontWeight: 'bold',
+    color: '#495057',
   },
   title: {
     margin: 0,

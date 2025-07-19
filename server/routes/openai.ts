@@ -13,7 +13,7 @@ router.post("/chat", async (req, res) => {
   console.log('🚀 /openai/chat エンドポイントにリクエスト受信');
   console.log('🚀 リクエストボディ:', JSON.stringify(req.body, null, 2));
   
-  const { messages } = req.body;
+  const { messages, ragEnabled = true } = req.body;
 
   if (!messages || !Array.isArray(messages)) {
     console.log('❌ メッセージ配列が無効:', messages);
@@ -25,10 +25,11 @@ router.post("/chat", async (req, res) => {
     const latestUserMessage = messages[messages.length - 1];
     const userQuestion = latestUserMessage.content;
     console.log('🚀 ユーザー質問:', userQuestion);
+    console.log('🚀 RAG有効:', ragEnabled);
 
-    // RAG検索を実行（Supabaseが設定されている場合のみ）
+    // RAG検索を実行（RAG有効かつSupabaseが設定されている場合のみ）
     let ragContext = '';
-    if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+    if (ragEnabled && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
       try {
         console.log('🤖 バックエンドRAG検索を実行中:', userQuestion);
         
@@ -51,7 +52,7 @@ router.post("/chat", async (req, res) => {
         if (error) {
           console.error('🤖 バックエンドSupabase RPC error:', error);
         } else if (data && data.length > 0) {
-          console.log('🤖 バックエンドRAG検索結果詳細:', data.map(chunk => ({
+          console.log('🤖 バックエンドRAG検索結果詳細:', data.map((chunk: any) => ({
             similarity: chunk.similarity,
             chunk_preview: chunk.chunk?.substring(0, 100) + '...'
           })));
@@ -61,7 +62,7 @@ router.post("/chat", async (req, res) => {
             .slice(0, 5) // 上位5件を取得
             .map((result: any) => {
               const chunk = result.chunk || '';
-              const keywords = userQuestion.toLowerCase().replace(/[とは？について教えてください何ですか]/g, '').trim().split(/\s+/).filter(k => k.length > 0);
+              const keywords = userQuestion.toLowerCase().replace(/[とは？について教えてください何ですか]/g, '').trim().split(/\s+/).filter((k: string) => k.length > 0);
               
               // 定義文判定
               const isDefinition = /[一二三四五六七八九十]\s+[^。]+\s+[^。]*をいう/.test(chunk) ||
@@ -105,7 +106,7 @@ router.post("/chat", async (req, res) => {
             .sort((a: any, b: any) => b.combinedScore - a.combinedScore)
             .slice(0, 3);
           
-          console.log('🤖 バックエンドフィルタリング後結果:', filteredData.map(item => ({
+          console.log('🤖 バックエンドフィルタリング後結果:', filteredData.map((item: any) => ({
             similarity: item.similarity,
             keywordScore: item.keywordScore,
             combinedScore: item.combinedScore,
@@ -124,13 +125,15 @@ router.post("/chat", async (req, res) => {
       } catch (ragError) {
         console.warn('🤖 バックエンドRAG検索エラー（スキップして通常処理を継続）:', ragError);
       }
+    } else if (!ragEnabled) {
+      console.log('🤖 RAG無効 - 通常のAI回答モード');
     } else {
       console.log('🤖 Supabase環境変数が設定されていません - RAG検索をスキップ');
     }
 
     // コンテキストを含むメッセージを作成
     const enhancedMessages = [...messages];
-    if (ragContext) {
+    if (ragEnabled && ragContext) {
       console.log('🤖 RAGコンテキストを追加中');
       // システムメッセージを追加してコンテキストを提供
       const systemMessage = {
@@ -148,6 +151,14 @@ ${ragContext}
       };
       enhancedMessages.unshift(systemMessage);
       console.log('🤖 追加されたシステムメッセージプレビュー:', systemMessage.content.substring(0, 200) + '...');
+    } else if (!ragEnabled) {
+      console.log('🤖 RAG無効 - 一般的なAIアシスタントとして回答');
+      // RAG無効時の基本システムメッセージ
+      const basicSystemMessage = {
+        role: 'system',
+        content: 'あなたは親しみやすく丁寧なAIアシスタントです。マンション理事会に関する質問に対して、一般的な知識に基づいて分かりやすく回答してください。'
+      };
+      enhancedMessages.unshift(basicSystemMessage);
     } else {
       console.log('🤖 RAGコンテキストなし - 一般的な回答を生成');
     }

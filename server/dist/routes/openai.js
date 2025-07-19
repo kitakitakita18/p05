@@ -15,7 +15,7 @@ const openai = new openai_1.OpenAI({
 router.post("/chat", async (req, res) => {
     console.log('🚀 /openai/chat エンドポイントにリクエスト受信');
     console.log('🚀 リクエストボディ:', JSON.stringify(req.body, null, 2));
-    const { messages } = req.body;
+    const { messages, ragEnabled = true } = req.body;
     if (!messages || !Array.isArray(messages)) {
         console.log('❌ メッセージ配列が無効:', messages);
         return res.status(400).json({ error: 'メッセージが必要です' });
@@ -25,9 +25,10 @@ router.post("/chat", async (req, res) => {
         const latestUserMessage = messages[messages.length - 1];
         const userQuestion = latestUserMessage.content;
         console.log('🚀 ユーザー質問:', userQuestion);
-        // RAG検索を実行（Supabaseが設定されている場合のみ）
+        console.log('🚀 RAG有効:', ragEnabled);
+        // RAG検索を実行（RAG有効かつSupabaseが設定されている場合のみ）
         let ragContext = '';
-        if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+        if (ragEnabled && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
             try {
                 console.log('🤖 バックエンドRAG検索を実行中:', userQuestion);
                 // 質問のembeddingを生成
@@ -110,12 +111,15 @@ router.post("/chat", async (req, res) => {
                 console.warn('🤖 バックエンドRAG検索エラー（スキップして通常処理を継続）:', ragError);
             }
         }
+        else if (!ragEnabled) {
+            console.log('🤖 RAG無効 - 通常のAI回答モード');
+        }
         else {
             console.log('🤖 Supabase環境変数が設定されていません - RAG検索をスキップ');
         }
         // コンテキストを含むメッセージを作成
         const enhancedMessages = [...messages];
-        if (ragContext) {
+        if (ragEnabled && ragContext) {
             console.log('🤖 RAGコンテキストを追加中');
             // システムメッセージを追加してコンテキストを提供
             const systemMessage = {
@@ -133,6 +137,15 @@ ${ragContext}
             };
             enhancedMessages.unshift(systemMessage);
             console.log('🤖 追加されたシステムメッセージプレビュー:', systemMessage.content.substring(0, 200) + '...');
+        }
+        else if (!ragEnabled) {
+            console.log('🤖 RAG無効 - 一般的なAIアシスタントとして回答');
+            // RAG無効時の基本システムメッセージ
+            const basicSystemMessage = {
+                role: 'system',
+                content: 'あなたは親しみやすく丁寧なAIアシスタントです。マンション理事会に関する質問に対して、一般的な知識に基づいて分かりやすく回答してください。'
+            };
+            enhancedMessages.unshift(basicSystemMessage);
         }
         else {
             console.log('🤖 RAGコンテキストなし - 一般的な回答を生成');
