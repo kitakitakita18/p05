@@ -2,11 +2,376 @@ import express from "express";
 import axios from "axios";
 import { OpenAI } from 'openai';
 import { supabase } from '../utils/supabaseClient';
+import { optimizedVectorSearch } from '../utils/optimizedVectorSearch';
+import { dbPool } from '../utils/databasePool';
+import { performanceProfiler } from '../utils/performanceProfiler';
 
 const router = express.Router();
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+// 🗄️ サーバーサイドキャッシュシステム
+interface ServerCacheEntry {
+  key: string;
+  data: any;
+  timestamp: number;
+  expiry: number;
+  hitCount: number;
+}
+
+class ServerCacheService {
+  private cache: Map<string, ServerCacheEntry> = new Map();
+  private maxSize: number = 500; // サーバーは大容量キャッシュ
+  private defaultTTL: number = 60 * 60 * 1000; // 1時間のデフォルトTTL
+  private stats = { hits: 0, misses: 0 };
+
+  // キー正規化
+  private normalizeKey(input: string): string {
+    return input
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[？?。、]/g, '')
+      .trim();
+  }
+
+  // キャッシュ保存
+  set(key: string, data: any, ttl: number = this.defaultTTL): void {
+    const now = Date.now();
+    const entry: ServerCacheEntry = {
+      key,
+      data,
+      timestamp: now,
+      expiry: now + ttl,
+      hitCount: 0
+    };
+
+    if (this.cache.size >= this.maxSize) {
+      this.evictLRU();
+    }
+
+    this.cache.set(key, entry);
+    console.log(`💾 サーバーキャッシュ保存: "${key}" (TTL: ${ttl}ms)`);
+  }
+
+  // キャッシュ取得
+  get(key: string): any | null {
+    const entry = this.cache.get(key);
+    if (!entry) {
+      this.stats.misses++;
+      return null;
+    }
+
+    const now = Date.now();
+    if (now > entry.expiry) {
+      this.cache.delete(key);
+      this.stats.misses++;
+      console.log(`⏰ サーバーキャッシュ期限切れ: "${key}"`);
+      return null;
+    }
+
+    entry.hitCount++;
+    this.stats.hits++;
+    console.log(`✅ サーバーキャッシュヒット: "${key}" (ヒット回数: ${entry.hitCount})`);
+    return entry.data;
+  }
+
+  // LRU退避
+  private evictLRU(): void {
+    let oldestKey = '';
+    let oldestTime = Date.now();
+
+    for (const [key, entry] of this.cache) {
+      if (entry.timestamp < oldestTime) {
+        oldestTime = entry.timestamp;
+        oldestKey = key;
+      }
+    }
+
+    if (oldestKey) {
+      this.cache.delete(oldestKey);
+      console.log(`🗑️ サーバーキャッシュLRU退避: "${oldestKey}"`);
+    }
+  }
+
+  // 統計取得
+  getStats() {
+    const total = this.stats.hits + this.stats.misses;
+    return {
+      hitRate: total > 0 ? (this.stats.hits / total * 100).toFixed(1) : '0.0',
+      totalHits: this.stats.hits,
+      totalMisses: this.stats.misses,
+      cacheSize: this.cache.size
+    };
+  }
+
+  // 期限切れクリーンアップ
+  cleanup(): number {
+    const now = Date.now();
+    let deletedCount = 0;
+    
+    for (const [key, entry] of this.cache) {
+      if (now > entry.expiry) {
+        this.cache.delete(key);
+        deletedCount++;
+      }
+    }
+    
+    if (deletedCount > 0) {
+      console.log(`🧹 サーバーキャッシュクリーンアップ: ${deletedCount}件削除`);
+    }
+    
+    return deletedCount;
+  }
+}
+
+// シングルトンインスタンス
+const serverCache = new ServerCacheService();
+
+// 5分間隔でクリーンアップ
+setInterval(() => {
+  serverCache.cleanup();
+}, 5 * 60 * 1000);
+
+// 🧠 OpenAI Embeddingキャッシュサービス
+class EmbeddingCacheService {
+  private cache: Map<string, { embedding: number[], timestamp: number, expiry: number }> = new Map();
+  private maxSize: number = 1000; // Embeddingは大量キャッシュ可能
+  private defaultTTL: number = 24 * 60 * 60 * 1000; // 24時間のデフォルトTTL（Embeddingは長期利用可能）
+  private stats = { hits: 0, misses: 0 };
+
+  // テキストを正規化してキャッシュキーを生成
+  private normalizeText(text: string): string {
+    return text
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[？?。、]/g, '')
+      .trim();
+  }
+
+  // Embeddingをキャッシュに保存
+  set(text: string, embedding: number[], ttl: number = this.defaultTTL): void {
+    const normalizedText = this.normalizeText(text);
+    const now = Date.now();
+    
+    const entry = {
+      embedding,
+      timestamp: now,
+      expiry: now + ttl
+    };
+
+    if (this.cache.size >= this.maxSize) {
+      this.evictLRU();
+    }
+
+    this.cache.set(normalizedText, entry);
+    console.log(`🧠 Embeddingキャッシュ保存: "${text.substring(0, 50)}..." (TTL: ${ttl}ms)`);
+  }
+
+  // キャッシュからEmbeddingを取得
+  get(text: string): number[] | null {
+    const normalizedText = this.normalizeText(text);
+    const entry = this.cache.get(normalizedText);
+    
+    if (!entry) {
+      this.stats.misses++;
+      return null;
+    }
+
+    const now = Date.now();
+    if (now > entry.expiry) {
+      this.cache.delete(normalizedText);
+      this.stats.misses++;
+      console.log(`⏰ Embeddingキャッシュ期限切れ: "${text.substring(0, 50)}..."`);
+      return null;
+    }
+
+    this.stats.hits++;
+    console.log(`✅ Embeddingキャッシュヒット: "${text.substring(0, 50)}..."`);
+    return entry.embedding;
+  }
+
+  // LRU退避
+  private evictLRU(): void {
+    let oldestKey = '';
+    let oldestTime = Date.now();
+
+    for (const [key, entry] of this.cache) {
+      if (entry.timestamp < oldestTime) {
+        oldestTime = entry.timestamp;
+        oldestKey = key;
+      }
+    }
+
+    if (oldestKey) {
+      this.cache.delete(oldestKey);
+      console.log(`🗑️ EmbeddingキャッシュLRU退避: "${oldestKey.substring(0, 30)}..."`);
+    }
+  }
+
+  // 統計取得
+  getStats() {
+    const total = this.stats.hits + this.stats.misses;
+    return {
+      hitRate: total > 0 ? (this.stats.hits / total * 100).toFixed(1) : '0.0',
+      totalHits: this.stats.hits,
+      totalMisses: this.stats.misses,
+      cacheSize: this.cache.size,
+      estimatedSavings: this.stats.hits * 0.0001 // 1ヒットあたり約$0.0001の節約
+    };
+  }
+
+  // 期限切れクリーンアップ
+  cleanup(): number {
+    const now = Date.now();
+    let deletedCount = 0;
+    
+    for (const [key, entry] of this.cache) {
+      if (now > entry.expiry) {
+        this.cache.delete(key);
+        deletedCount++;
+      }
+    }
+    
+    if (deletedCount > 0) {
+      console.log(`🧹 Embeddingキャッシュクリーンアップ: ${deletedCount}件削除`);
+    }
+    
+    return deletedCount;
+  }
+}
+
+// シングルトンインスタンス
+const embeddingCache = new EmbeddingCacheService();
+
+// 1時間間隔でクリーンアップ
+setInterval(() => {
+  embeddingCache.cleanup();
+}, 60 * 60 * 1000);
+
+// 🧠 即座のAI応答生成（並列処理用）
+const generateImmediateAIResponse = async (messages: any[], ragEnabled: boolean = true) => {
+  console.log('🧠 即座のAI応答生成開始');
+  
+  // 基本システムメッセージ
+  const systemMessage = {
+    role: 'system',
+    content: ragEnabled ? 
+      'あなたはマンション理事会の専門アシスタントです。質問に対して分かりやすく丁寧に回答してください。' :
+      'あなたは親しみやすく丁寧なAIアシスタントです。マンション理事会に関する質問に対して、一般的な知識に基づいて分かりやすく回答してください。'
+  };
+  
+  const enhancedMessages = [systemMessage, ...messages];
+  
+  const response = await axios.post(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      model: ragEnabled ? "gpt-4o-mini" : "gpt-3.5-turbo",
+      messages: enhancedMessages,
+      max_tokens: ragEnabled ? 800 : 600, // 初回応答は控えめに
+      temperature: 0.3,
+      top_p: 0.9,
+      frequency_penalty: 0.1,
+      presence_penalty: 0.1,
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 12000, // 12秒タイムアウト（並列実行のため短縮）
+    }
+  );
+  
+  console.log('🧠 即座のAI応答生成完了');
+  return (response.data as any).choices[0].message;
+};
+
+// 🔍 RAG検索実行（並列処理用）
+const performRAGSearch = async (searchQuery: string, userQuestion: string, requestId: string) => {
+  console.log('🔍 RAG検索実行開始');
+  
+  try {
+    const searchResult = await optimizedVectorSearch.optimizedSearch(searchQuery, {
+      threshold: 0.3,
+      maxResults: 3,
+      prioritizeDefinitions: userQuestion.includes('とは') || userQuestion.includes('について'),
+      enableCache: true
+    });
+    
+    // 軽量プロファイリング
+    if (process.env.ENABLE_DETAILED_PROFILING === 'true') {
+      performanceProfiler.recordSearchProcessing(
+        requestId,
+        searchResult.metrics.vectorSearchTime,
+        searchResult.metrics.postProcessTime,
+        searchResult.results.length,
+        searchResult.metrics.cacheHit,
+        searchResult.results.slice(0, 3).map(r => r.similarity)
+      );
+    }
+    
+    console.log('🔍 RAG検索実行完了:', searchResult.results.length, '件');
+    return searchResult;
+  } catch (error) {
+    console.warn('🔍 RAG検索エラー:', error);
+    throw error;
+  }
+};
+
+// 📈 RAG情報でAI応答を強化
+const enhanceAIResponseWithRAG = async (baseResponse: string, ragContext: string) => {
+  console.log('📈 AI応答をRAG情報で強化開始');
+  
+  const enhancePrompt = `
+以下の基本回答をRAG検索で得られた関連情報を使って、より詳しく正確に強化してください。
+
+基本回答:
+${baseResponse}
+
+関連文書情報:
+${ragContext}
+
+強化時の注意点:
+- 基本回答の内容は維持しつつ、関連文書の情報で補強する
+- 条文番号や具体的な根拠があれば明示する
+- 自然で読みやすい文章にまとめる
+- 専門用語は分かりやすく説明する`;
+
+  try {
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "あなたは文書情報を使ってAI応答を強化する専門アシスタントです。"
+          },
+          {
+            role: "user",
+            content: enhancePrompt
+          }
+        ],
+        max_tokens: 1200,
+        temperature: 0.2,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 10000,
+      }
+    );
+    
+    console.log('📈 AI応答強化完了');
+    return (response.data as any).choices[0].message.content;
+  } catch (error) {
+    console.warn('📈 AI応答強化エラー、基本応答を返却:', error);
+    return baseResponse;
+  }
+};
 
 // 最適化された検索クエリ生成関数
 const generateOptimalSearchQuery = (messages: any[], latestQuestion: string): string => {
@@ -58,9 +423,16 @@ const generateOptimalSearchQuery = (messages: any[], latestQuestion: string): st
   return searchQuery;
 };
 
-// チャット完了エンドポイント（RAG検索統合）
+// チャット完了エンドポイント（RAG検索統合 + キャッシュ機能）
 router.post("/chat", async (req, res) => {
-  console.log('🚀 /openai/chat エンドポイントにリクエスト受信');
+  const requestId = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  // 🚀 プロファイリング開始（開発環境のみ）
+  if (process.env.ENABLE_DETAILED_PROFILING === 'true') {
+    performanceProfiler.startProfiling(requestId, '/openai/chat', 'POST');
+  }
+  
+  console.log('🚀 /openai/chat エンドポイントにリクエスト受信 [' + requestId + ']');
   console.log('🚀 リクエストボディ:', JSON.stringify(req.body, null, 2));
   
   const { messages, ragEnabled = true } = req.body;
@@ -75,182 +447,162 @@ router.post("/chat", async (req, res) => {
     const latestUserMessage = messages[messages.length - 1];
     const userQuestion = latestUserMessage.content;
     
+    // 💾 サーバーキャッシュチェック
+    const cacheKey = `chat_${userQuestion}_${ragEnabled}`;
+    const cachedResult = serverCache.get(cacheKey);
+    
+    if (cachedResult) {
+      console.log('⚡ サーバーキャッシュから高速応答');
+      return res.json({ 
+        content: cachedResult.content,
+        cached: true,
+        optimizationStats: process.env.ENABLE_DETAILED_STATS === 'true' ? {
+          server: serverCache.getStats(),
+          embedding: embeddingCache.getStats(),
+          vectorSearch: optimizedVectorSearch.getStats(),
+          searchMetrics: null,
+          dbPool: dbPool.getPoolStats()
+        } : {
+          simplified: true,
+          cacheHit: true
+        }
+      });
+    }
+    
     // 最適化された検索クエリを生成
     const searchQuery = generateOptimalSearchQuery(messages, userQuestion);
     console.log('🚀 ユーザー質問:', userQuestion);
     console.log('🚀 検索クエリ（文脈結合後）:', searchQuery);
     console.log('🚀 RAG有効:', ragEnabled);
 
-    // RAG検索を実行（RAG有効かつSupabaseが設定されている場合のみ）
+    // ⚡ 真の並列処理: AI応答とRAG検索を完全分離
+    console.log('⚡ 並列処理開始: AI応答とRAG検索を同時実行');
     let ragContext = '';
-    if (ragEnabled && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
-      try {
-        console.log('🤖 バックエンドRAG検索を実行中:', userQuestion);
-        
-        // 文脈を考慮した検索クエリのembeddingを生成
-        const embeddingResponse = await openai.embeddings.create({
-          model: 'text-embedding-ada-002',
-          input: searchQuery,
-        });
-        
-        console.log('🤖 バックエンド検索クエリ:', searchQuery);
-        
-        const queryEmbedding = embeddingResponse.data[0].embedding;
-        console.log('🤖 バックエンドembedding生成完了:', queryEmbedding.length, 'dimensions');
-        
-        // Supabaseでベクトル検索を実行
-        const { data, error } = await supabase.rpc('match_regulation_chunks', {
-          query_embedding: queryEmbedding,
-          match_threshold: 0.3,
-          match_count: 5,
-        });
-        
-        if (error) {
-          console.error('🤖 バックエンドSupabase RPC error:', error);
-        } else if (data && data.length > 0) {
-          console.log('🤖 バックエンドRAG検索結果詳細:', data.map((chunk: any) => ({
-            similarity: chunk.similarity,
-            chunk_preview: chunk.chunk?.substring(0, 100) + '...'
-          })));
-          
-          // 定義文優先フィルタリングを適用
-          const filteredData = data
-            .slice(0, 5) // 上位5件を取得
-            .map((result: any) => {
-              const chunk = result.chunk || '';
-              const keywords = userQuestion.toLowerCase().replace(/[とは？について教えてください何ですか]/g, '').trim().split(/\s+/).filter((k: string) => k.length > 0);
-              
-              // 定義文判定
-              const isDefinition = /[一二三四五六七八九十]\s+[^。]+\s+[^。]*をいう/.test(chunk) ||
-                                   /^\s*[一二三四五六七八九十]\s+/.test(chunk);
-              
-              // 条文判定
-              const hasArticle = /第\d+条/.test(chunk);
-              
-              // キーワードマッチスコア計算
-              let keywordScore = 0;
-              const chunkLower = chunk.toLowerCase();
-              
-              for (const keyword of keywords) {
-                if (chunkLower.includes(keyword)) {
-                  keywordScore += 1.0;
-                }
-              }
-              
-              // 定義文ボーナス
-              if (isDefinition) {
-                keywordScore += 10.0;
-              }
-              
-              // 条文ボーナス
-              if (hasArticle && !isDefinition) {
-                keywordScore += 5.0;
-              }
-              
-              // 総合スコア計算
-              const combinedScore = result.similarity * 0.3 + keywordScore * 0.7;
-              
-              return {
-                ...result,
-                keywordScore,
-                combinedScore,
-                isDefinition,
-                hasArticle
-              };
-            })
-            .filter((result: any) => result.combinedScore > 0)
-            .sort((a: any, b: any) => b.combinedScore - a.combinedScore)
-            .slice(0, 3);
-          
-          console.log('🤖 バックエンドフィルタリング後結果:', filteredData.map((item: any) => ({
-            similarity: item.similarity,
-            keywordScore: item.keywordScore,
-            combinedScore: item.combinedScore,
-            isDefinition: item.isDefinition,
-            hasArticle: item.hasArticle,
-            preview: item.chunk.substring(0, 100) + '...'
-          })));
-          
-          ragContext = filteredData.map((chunk: any, index: number) => 
-            `【文書${index + 1}】（類似度: ${(chunk.similarity * 100).toFixed(1)}%${chunk.isDefinition ? '・定義文' : ''}${chunk.hasArticle ? '・条文' : ''}）\n${chunk.chunk}`
-          ).join('\n\n---\n\n');
-          console.log('🤖 バックエンドRAG検索結果:', filteredData.length, '件のコンテキストを取得');
-        } else {
-          console.log('🤖 バックエンドRAG検索結果が空:', { data, error });
-        }
-      } catch (ragError) {
-        console.warn('🤖 バックエンドRAG検索エラー（スキップして通常処理を継続）:', ragError);
-      }
-    } else if (!ragEnabled) {
-      console.log('🤖 RAG無効 - 通常のAI回答モード');
+    let searchMetrics = null;
+    let aiResponse = null;
+    
+    // 🚀 Promise.allSettledで完全並列実行
+    const parallelStart = performance.now();
+    const [aiResult, ragResult] = await Promise.allSettled([
+      // 🧠 AI応答を即座に開始（RAGコンテキストなし）
+      generateImmediateAIResponse(messages, ragEnabled),
+      
+      // 🔍 並行してRAG検索実行
+      ragEnabled && process.env.SUPABASE_URL && process.env.SUPABASE_KEY ? 
+        performRAGSearch(searchQuery, userQuestion, requestId) : 
+        Promise.resolve(null)
+    ]);
+    
+    const parallelEnd = performance.now();
+    console.log(`⚡ 並列処理完了: ${(parallelEnd - parallelStart).toFixed(2)}ms`);
+    
+    // 🧠 AI応答結果処理
+    if (aiResult.status === 'fulfilled') {
+      aiResponse = aiResult.value;
+      console.log('✅ AI応答成功');
     } else {
-      console.log('🤖 Supabase環境変数が設定されていません - RAG検索をスキップ');
-    }
-
-    // コンテキストを含むメッセージを作成
-    const enhancedMessages = [...messages];
-    if (ragEnabled && ragContext) {
-      console.log('🤖 RAGコンテキストを追加中');
-      // システムメッセージを追加してコンテキストを提供
-      const systemMessage = {
-        role: 'system',
-        content: `あなたはマンション理事会の専門アシスタントです。以下の関連文書を参考に、自然で分かりやすい日本語で回答してください。
-
-関連文書：
-${ragContext}
-
-回答時の注意点：
-- 専門用語は分かりやすく説明する
-- 具体例を交えて説明する
-- 必要に応じて条文番号や根拠を明示する
-- 簡潔で親しみやすい口調で回答する`
-      };
-      enhancedMessages.unshift(systemMessage);
-      console.log('🤖 追加されたシステムメッセージプレビュー:', systemMessage.content.substring(0, 200) + '...');
-    } else if (!ragEnabled) {
-      console.log('🤖 RAG無効 - 一般的なAIアシスタントとして回答');
-      // RAG無効時の基本システムメッセージ
-      const basicSystemMessage = {
-        role: 'system',
-        content: 'あなたは親しみやすく丁寧なAIアシスタントです。マンション理事会に関する質問に対して、一般的な知識に基づいて分かりやすく回答してください。'
-      };
-      enhancedMessages.unshift(basicSystemMessage);
-    } else {
-      console.log('🤖 RAGコンテキストなし - 一般的な回答を生成');
+      console.error('❌ AI応答失敗:', aiResult.reason);
+      throw new Error('AI応答生成に失敗しました');
     }
     
-    console.log('🤖 OpenAIに送信するメッセージ数:', enhancedMessages.length);
-    console.log('🤖 OpenAIに送信するメッセージ:', enhancedMessages.map(m => ({ 
-      role: m.role, 
-      contentPreview: m.content?.substring(0, 100) + '...' 
-    })));
+    // 🔍 RAG検索結果処理
+    if (ragResult.status === 'fulfilled' && ragResult.value) {
+      const searchResult = ragResult.value;
+      searchMetrics = searchResult.metrics;
+      const results = searchResult.results;
+      
+      if (results && results.length > 0) {
+        console.log('✅ RAG検索成功:', results.length, '件取得');
+        ragContext = results.map((result, index) => {
+          const metadata = result.metadata;
+          const tags = [];
+          if (metadata.isDefinition) tags.push('定義文');
+          if (metadata.hasArticle) tags.push('条文');
+          if (metadata.importance > 3) tags.push('重要');
+          
+          return `【文書${index + 1}】（類似度: ${(result.similarity * 100).toFixed(1)}%${tags.length > 0 ? '・' + tags.join('・') : ''}）\n${result.chunk}`;
+        }).join('\n\n---\n\n');
+      }
+    } else if (ragResult.status === 'rejected') {
+      console.warn('⚠️ RAG検索失敗（AI応答は利用可能）:', ragResult.reason);
+    } else if (!ragEnabled) {
+      console.log('🤖 RAG無効 - AI応答のみ使用');
+    }
+    
+    // 📈 RAG情報があれば応答を強化
+    if (ragEnabled && ragContext && aiResponse) {
+      console.log('🔄 RAG情報でAI応答を強化中...');
+      const enhancedResponse = await enhanceAIResponseWithRAG(aiResponse.content, ragContext);
+      aiResponse.content = enhancedResponse;
+      console.log('✅ RAG強化完了');
+    }
 
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: enhancedMessages,
-        max_tokens: 1200,
-        temperature: 0.8,
+    // 🧠 AI処理プロファイリング記録（開発環境のみ）
+    if (process.env.ENABLE_DETAILED_PROFILING === 'true') {
+      performanceProfiler.recordAIProcessing(
+        requestId,
+        'parallel_chat_completion',
+        parallelEnd - parallelStart,
+        undefined // 並列処理なので個別のトークン使用量は記録しない
+      );
+    }
+    
+    // 💾 成功した応答をサーバーキャッシュに保存
+    const cacheData = {
+      content: aiResponse.content,
+      timestamp: Date.now(),
+      ragContext: ragContext ? ragContext.substring(0, 200) + '...' : null
+    };
+    
+    // RAG有効時は長めのキャッシュ、無効時は短めに設定
+    const cacheTTL = ragEnabled ? 60 * 60 * 1000 : 30 * 60 * 1000; // 1時間 or 30分
+    serverCache.set(cacheKey, cacheData, cacheTTL);
+    console.log('💾 AI応答をサーバーキャッシュに保存しました');
+    
+    // 🏁 プロファイリング完了（開発環境のみ）
+    const profileResult = process.env.ENABLE_DETAILED_PROFILING === 'true' ? 
+      performanceProfiler.endProfiling(requestId, JSON.stringify(aiResponse).length) : null;
+    
+    // 応答に最適化統計を含める（軽量化）
+    const responseData = {
+      ...aiResponse,
+      cached: false,
+      optimizationStats: process.env.ENABLE_DETAILED_STATS === 'true' ? {
+        server: serverCache.getStats(),
+        embedding: embeddingCache.getStats(),
+        vectorSearch: optimizedVectorSearch.getStats(),
+        searchMetrics: searchMetrics,
+        dbPool: dbPool.getPoolStats()
+      } : {
+        simplified: true,
+        totalTime: profileResult?.request.totalTime || 0
       },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+      performanceProfile: process.env.ENABLE_DETAILED_PROFILING === 'true' && profileResult ? {
+        requestId: profileResult.requestId,
+        totalTime: profileResult.request.totalTime,
+        aiTime: profileResult.ai.chatCompletionTime,
+        searchTime: profileResult.search.vectorSearchTime
+      } : null
+    };
     
-    const aiResponse = (response.data as any).choices[0].message;
-    console.log('🤖 OpenAI応答:', aiResponse);
-    console.log('🤖 応答内容プレビュー:', aiResponse.content?.substring(0, 200) + '...');
-    
-    res.json(aiResponse);
+    res.json(responseData);
   } catch (error: any) {
     console.error("OpenAI API error:", error.response?.data || error.message);
+    
+    // ⚠️ エラープロファイリング記録（開発環境のみ）
+    const profileResult = process.env.ENABLE_DETAILED_PROFILING === 'true' ? (() => {
+      performanceProfiler.recordError(requestId, error, 'openai_api_error');
+      return performanceProfiler.endProfiling(requestId, 0);
+    })() : null;
+    
     res.status(500).json({ 
       error: "AI応答エラー",
-      details: error.response?.data?.error?.message || error.message
+      details: error.response?.data?.error?.message || error.message,
+      performanceProfile: profileResult ? {
+        requestId: profileResult.requestId,
+        totalTime: profileResult.request.totalTime,
+        errorCount: profileResult.errors.length
+      } : null
     });
   }
 });
