@@ -304,7 +304,7 @@ export const api = {
   },
 
   // ベクトル検索API
-  searchDocuments: async (question: string, matchThreshold: number = 0.7, matchCount: number = 3): Promise<{question: string, results: any[]}> => {
+  searchDocuments: async (question: string, matchThreshold: number = 0.2, matchCount: number = 10): Promise<{question: string, results: any[]}> => {
     const response = await axios.post(`${API_BASE_URL}/search`, {
       question,
       matchThreshold,
@@ -329,7 +329,7 @@ export const sendChatMessage = async (messages: any[]): Promise<{content: string
   }
 };
 
-export const searchDocuments = async (question: string, matchThreshold: number = 0.5, matchCount: number = 5): Promise<{question: string, results: any[]}> => {
+export const searchDocuments = async (question: string, matchThreshold: number = 0.2, matchCount: number = 10): Promise<{question: string, results: any[]}> => {
   console.log('🔍 Searching documents for:', question);
   console.log('🔍 Search params:', { question, matchThreshold, matchCount });
   console.log('🔍 Headers:', getAuthHeaders());

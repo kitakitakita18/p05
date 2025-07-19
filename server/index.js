@@ -1517,7 +1517,15 @@ app.post('/api/meetings/generate-schedule', authenticateToken, authorizeRole(['a
 });
 
 // OpenAI APIルート
-const openaiRoutes = require('./routes/openai');
+// OpenAIルート（TypeScriptからのインポート）
+let openaiRoutes = null;
+try {
+  openaiRoutes = require('./dist/routes/openai.js').default;
+  console.log('OpenAI routes loaded successfully from TypeScript');
+} catch (error) {
+  console.warn('TypeScript OpenAI routes not loaded, falling back to JS:', error.message);
+  openaiRoutes = require('./routes/openai');
+}
 
 // 検索ルート（TypeScriptからのインポート）
 try {
@@ -1526,6 +1534,24 @@ try {
   console.log('Search routes loaded successfully');
 } catch (error) {
   console.warn('Search routes not loaded:', error.message);
+}
+
+// アップロードルート（TypeScriptからのインポート）
+try {
+  const uploadRoutes = require('./dist/routes/upload.js').default;
+  app.use('/api/upload', authenticateToken, uploadRoutes);
+  console.log('Upload routes loaded successfully');
+} catch (error) {
+  console.warn('Upload routes not loaded:', error.message);
+}
+
+// Supabaseテストルート（TypeScriptからのインポート）
+try {
+  const supabaseTestRoutes = require('./dist/routes/supabaseTest.js').default;
+  app.use('/api/supabase-test', authenticateToken, supabaseTestRoutes);
+  console.log('Supabase test routes loaded successfully');
+} catch (error) {
+  console.warn('Supabase test routes not loaded:', error.message);
 }
 
 // 認証が必要なOpenAI APIルートをマウント
@@ -1554,13 +1580,13 @@ async function uploadPDFOnStartup() {
       return;
     }
     
-    // API URLを環境変数から取得、デフォルトは本番環境
-    const apiUrl = process.env.API_BASE_URL || 'https://p05-phgg.onrender.com';
+    // API URLを環境変数から取得、デフォルトはローカル環境
+    const apiUrl = process.env.API_BASE_URL || 'http://localhost:5105';
     
     // 管理者ユーザーでログインしてJWTトークンを取得
     const loginResponse = await axios.post(`${apiUrl}/api/auth/login`, {
-      email: 'admin@example.com',
-      password: 'admin123'
+      email: 'admin@mansion.com',
+      password: 'password'
     });
     
     const token = loginResponse.data.token;
@@ -1568,6 +1594,8 @@ async function uploadPDFOnStartup() {
     // FormDataを作成
     const form = new FormData();
     form.append('pdf', fs.createReadStream(pdfPath));
+    form.append('unionId', 'mansion-001');
+    form.append('regulationName', 'マンション規約');
     
     // PDFをアップロード
     const response = await axios.post(`${apiUrl}/api/upload/pdf`, form, {
@@ -1589,8 +1617,8 @@ const startServer = async () => {
     await initializeDatabase();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
-      // サーバー起動後にPDFアップロードを実行
-      uploadPDFOnStartup();
+      // PDF自動アップロードは無効化（直接ベクトルDBに保存済み）
+      // uploadPDFOnStartup();
     });
   } catch (error) {
     console.error('サーバーの起動に失敗しました:', error);

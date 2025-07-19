@@ -10,9 +10,13 @@ const openai = new OpenAI({
 
 // チャット完了エンドポイント（RAG検索統合）
 router.post("/chat", async (req, res) => {
+  console.log('🚀 /openai/chat エンドポイントにリクエスト受信');
+  console.log('🚀 リクエストボディ:', JSON.stringify(req.body, null, 2));
+  
   const { messages } = req.body;
 
   if (!messages || !Array.isArray(messages)) {
+    console.log('❌ メッセージ配列が無効:', messages);
     return res.status(400).json({ error: 'メッセージが必要です' });
   }
 
@@ -20,12 +24,13 @@ router.post("/chat", async (req, res) => {
     // 最新のユーザーメッセージを取得
     const latestUserMessage = messages[messages.length - 1];
     const userQuestion = latestUserMessage.content;
+    console.log('🚀 ユーザー質問:', userQuestion);
 
     // RAG検索を実行（Supabaseが設定されている場合のみ）
     let ragContext = '';
     if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
       try {
-        console.log('RAG検索を実行中:', userQuestion);
+        console.log('🤖 バックエンドRAG検索を実行中:', userQuestion);
         
         // 質問のembeddingを生成
         const embeddingResponse = await openai.embeddings.create({
@@ -34,42 +39,132 @@ router.post("/chat", async (req, res) => {
         });
         
         const queryEmbedding = embeddingResponse.data[0].embedding;
+        console.log('🤖 バックエンドembedding生成完了:', queryEmbedding.length, 'dimensions');
         
         // Supabaseでベクトル検索を実行
         const { data, error } = await supabase.rpc('match_regulation_chunks', {
           query_embedding: queryEmbedding,
-          match_threshold: 0.7,
-          match_count: 3,
+          match_threshold: 0.3,
+          match_count: 5,
         });
         
         if (error) {
-          console.error('Supabase RPC error:', error);
+          console.error('🤖 バックエンドSupabase RPC error:', error);
         } else if (data && data.length > 0) {
-          ragContext = data.map((chunk: any) => chunk.chunk).join('\n\n');
-          console.log('RAG検索結果:', data.length, '件のコンテキストを取得');
+          console.log('🤖 バックエンドRAG検索結果詳細:', data.map(chunk => ({
+            similarity: chunk.similarity,
+            chunk_preview: chunk.chunk?.substring(0, 100) + '...'
+          })));
+          
+          // 定義文優先フィルタリングを適用
+          const filteredData = data
+            .slice(0, 5) // 上位5件を取得
+            .map((result: any) => {
+              const chunk = result.chunk || '';
+              const keywords = userQuestion.toLowerCase().replace(/[とは？について教えてください何ですか]/g, '').trim().split(/\s+/).filter(k => k.length > 0);
+              
+              // 定義文判定
+              const isDefinition = /[一二三四五六七八九十]\s+[^。]+\s+[^。]*をいう/.test(chunk) ||
+                                   /^\s*[一二三四五六七八九十]\s+/.test(chunk);
+              
+              // 条文判定
+              const hasArticle = /第\d+条/.test(chunk);
+              
+              // キーワードマッチスコア計算
+              let keywordScore = 0;
+              const chunkLower = chunk.toLowerCase();
+              
+              for (const keyword of keywords) {
+                if (chunkLower.includes(keyword)) {
+                  keywordScore += 1.0;
+                }
+              }
+              
+              // 定義文ボーナス
+              if (isDefinition) {
+                keywordScore += 10.0;
+              }
+              
+              // 条文ボーナス
+              if (hasArticle && !isDefinition) {
+                keywordScore += 5.0;
+              }
+              
+              // 総合スコア計算
+              const combinedScore = result.similarity * 0.3 + keywordScore * 0.7;
+              
+              return {
+                ...result,
+                keywordScore,
+                combinedScore,
+                isDefinition,
+                hasArticle
+              };
+            })
+            .filter((result: any) => result.combinedScore > 0)
+            .sort((a: any, b: any) => b.combinedScore - a.combinedScore)
+            .slice(0, 3);
+          
+          console.log('🤖 バックエンドフィルタリング後結果:', filteredData.map(item => ({
+            similarity: item.similarity,
+            keywordScore: item.keywordScore,
+            combinedScore: item.combinedScore,
+            isDefinition: item.isDefinition,
+            hasArticle: item.hasArticle,
+            preview: item.chunk.substring(0, 100) + '...'
+          })));
+          
+          ragContext = filteredData.map((chunk: any, index: number) => 
+            `【文書${index + 1}】（類似度: ${(chunk.similarity * 100).toFixed(1)}%${chunk.isDefinition ? '・定義文' : ''}${chunk.hasArticle ? '・条文' : ''}）\n${chunk.chunk}`
+          ).join('\n\n---\n\n');
+          console.log('🤖 バックエンドRAG検索結果:', filteredData.length, '件のコンテキストを取得');
+        } else {
+          console.log('🤖 バックエンドRAG検索結果が空:', { data, error });
         }
       } catch (ragError) {
-        console.warn('RAG検索エラー（スキップして通常処理を継続）:', ragError);
+        console.warn('🤖 バックエンドRAG検索エラー（スキップして通常処理を継続）:', ragError);
       }
+    } else {
+      console.log('🤖 Supabase環境変数が設定されていません - RAG検索をスキップ');
     }
 
     // コンテキストを含むメッセージを作成
     const enhancedMessages = [...messages];
     if (ragContext) {
+      console.log('🤖 RAGコンテキストを追加中');
       // システムメッセージを追加してコンテキストを提供
-      enhancedMessages.unshift({
+      const systemMessage = {
         role: 'system',
-        content: `以下は関連する規約や文書の内容です。この情報を参考にして質問に答えてください：\n\n${ragContext}`
-      });
+        content: `あなたはマンション理事会の専門アシスタントです。以下の関連文書を参考に、自然で分かりやすい日本語で回答してください。
+
+関連文書：
+${ragContext}
+
+回答時の注意点：
+- 専門用語は分かりやすく説明する
+- 具体例を交えて説明する
+- 必要に応じて条文番号や根拠を明示する
+- 簡潔で親しみやすい口調で回答する`
+      };
+      enhancedMessages.unshift(systemMessage);
+      console.log('🤖 追加されたシステムメッセージプレビュー:', systemMessage.content.substring(0, 200) + '...');
+    } else {
+      console.log('🤖 RAGコンテキストなし - 一般的な回答を生成');
     }
+    
+    console.log('🤖 OpenAIに送信するメッセージ数:', enhancedMessages.length);
+    console.log('🤖 OpenAIに送信するメッセージ:', enhancedMessages.map(m => ({ 
+      role: m.role, 
+      contentPreview: m.content?.substring(0, 100) + '...' 
+    })));
 
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4-1106-nano",
+        model: "gpt-4o-mini",
         messages: enhancedMessages,
-        max_tokens: 1000,
-        temperature: 0.7,
+        max_tokens: 1200,
+        temperature: 0.8,
       },
       {
         headers: {
@@ -79,7 +174,11 @@ router.post("/chat", async (req, res) => {
       }
     );
     
-    res.json((response.data as any).choices[0].message);
+    const aiResponse = (response.data as any).choices[0].message;
+    console.log('🤖 OpenAI応答:', aiResponse);
+    console.log('🤖 応答内容プレビュー:', aiResponse.content?.substring(0, 200) + '...');
+    
+    res.json(aiResponse);
   } catch (error: any) {
     console.error("OpenAI API error:", error.response?.data || error.message);
     res.status(500).json({ 

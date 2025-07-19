@@ -16,6 +16,7 @@ const multer_1 = __importDefault(require("multer"));
 const { dbManager, initializeDatabase } = require('./database');
 const openai_1 = __importDefault(require("./routes/openai"));
 const supabaseTest_1 = __importDefault(require("./routes/supabaseTest"));
+const ask_1 = __importDefault(require("./routes/ask"));
 require("./utils/supabaseClient"); // Supabase接続確認を実行
 const app = (0, express_1.default)();
 exports.app = app;
@@ -60,6 +61,7 @@ const authorizeRole = (roles) => {
 // OpenAI APIルート
 app.use("/api/openai", authenticateToken, openai_1.default);
 app.use("/api/supabase-test", supabaseTest_1.default);
+app.use("/api/ask", authenticateToken, ask_1.default);
 // Login endpoint
 app.post('/api/auth/login', async (req, res) => {
     try {

@@ -24,7 +24,19 @@ const createEmbedding = async (text: string) => {
 
 // ChatGPT回答生成ヘルパー関数
 const chatCompletion = async (question: string, context: string) => {
-  const prompt = `次の規約データを参考に質問に回答してください:\n${context}\n質問: ${question}`;
+  const prompt = `あなたはマンション管理規約の専門家です。以下の規約データを参考に、質問に正確に回答してください。
+
+規約データ:
+${context}
+
+質問: ${question}
+
+回答の際は以下の形式で答えてください：
+- 該当する条文がある場合は「第○条」から始めて条文の全文を記載
+- 条文が複数ある場合は全て記載
+- 条文が見つからない場合は「該当する条文は見つかりません」と回答
+
+質問に最も関連する条文を正確に特定し、条文番号と内容を含めて回答してください。`;
   
   const completion = await openai.chat.completions.create({
     model: "gpt-3.5-turbo",
@@ -35,7 +47,7 @@ const chatCompletion = async (question: string, context: string) => {
 };
 
 // POST /api/ask
-router.post("/ask", async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const { question } = req.body;
     if (!question) {
@@ -48,7 +60,7 @@ router.post("/ask", async (req, res) => {
     // Supabaseで類似検索 (pgvectorの<->演算子で距離を計算)
     const { data, error } = await supabase.rpc('match_regulation_chunks', {
       query_embedding: questionEmbedding,
-      match_threshold: 0.8,
+      match_threshold: 0.2,
       match_count: 3,
     });
 

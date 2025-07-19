@@ -12,6 +12,7 @@ import multer from "multer";
 const { dbManager, initializeDatabase } = require('./database');
 import openaiRouter from "./routes/openai";
 import supabaseTestRouter from "./routes/supabaseTest";
+import askRouter from "./routes/ask";
 import "./utils/supabaseClient"; // Supabase接続確認を実行
 
 const app = express();
@@ -69,6 +70,7 @@ const authorizeRole = (roles: string[]) => {
 // OpenAI APIルート
 app.use("/api/openai", authenticateToken, openaiRouter);
 app.use("/api/supabase-test", supabaseTestRouter);
+app.use("/api/ask", authenticateToken, askRouter);
 
 // Login endpoint
 app.post('/api/auth/login', async (req, res) => {

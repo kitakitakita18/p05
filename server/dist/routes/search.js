@@ -12,7 +12,7 @@ const openai = new openai_1.OpenAI({
 });
 router.post('/', async (req, res) => {
     try {
-        const { question, matchThreshold = 0.5, matchCount = 5 } = req.body;
+        const { question, matchThreshold = 0.2, matchCount = 10 } = req.body;
         console.log('🔍 Search request received:', { question, matchThreshold, matchCount });
         const embeddingResponse = await openai.embeddings.create({
             model: 'text-embedding-ada-002',
